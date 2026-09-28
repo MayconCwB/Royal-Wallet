@@ -6,8 +6,8 @@
   <title>Royal Wallet</title>
   <meta name="description" content="Royal Wallet — Controle financeiro pessoal e familiar">
   <meta name="theme-color" content="#8b1e1e">
-  <link rel="apple-touch-icon" id="appleTouchIcon" href="">
-  <link rel="icon" id="dynamicFavicon" type="image/png" href="">
+  <link rel="apple-touch-icon" id="appleTouchIcon" href="https://generated-images.adapta.one/pcp1%40mrinox.com.br/01a0d181-72de-7662-9b26-19852d5f8512/2026-09-28T04-24-21-579Z_Original_user_intent_Tool_generated_image_directi.png">
+  <link rel="icon" id="dynamicFavicon" type="image/png" href="https://generated-images.adapta.one/pcp1%40mrinox.com.br/01a0d181-72de-7662-9b26-19852d5f8512/2026-09-28T04-24-21-579Z_Original_user_intent_Tool_generated_image_directi.png">
   <link rel="manifest" id="dynamicManifest">
 
   <!-- Basecoat CSS & Shell CSS -->
@@ -163,332 +163,8 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
       flex-direction: column;
     }
 
-       1) ÍCONE DA MARCA — FIDELIDADE TOTAL AO PNG APROVADO
-       mcDesenhaIconeMarca(size):
-       - Squircle 1:1 fundo vermelho-escuro tijolo/vinho (#8b1e1e)
-       - Centro-esquerda: capacete espartano creme/off-white (#f5efe0), crista preta, viseira/sombras
-       - À direita: gráfico barras 3 colunas verde-escuro (#1e5c3a), seta branca ascendente
-       - Inferior: moeda dourada (#f0b90b) com cifrão $, levemente abaixo/direita do capacete
-       - Sombra diagonal longa projetada para inferior esquerdo
-       ==================================================================== */
-    function mcDesenhaIconeMarca(size) {
-      const canvas = document.createElement('canvas');
-      canvas.width = size;
-      canvas.height = size;
-      const ctx = canvas.getContext('2d');
-      const s = size / 200; // fator de escala relativo a base 200x200
+    /* Logo controlado exclusivamente pelo bloco JavaScript principal. */
 
-      ctx.clearRect(0, 0, size, size);
-
-      // Squircle app icon
-      const r = 40 * s;
-      ctx.beginPath();
-      ctx.moveTo(r, 0);
-      ctx.lineTo(size - r, 0);
-      ctx.quadraticCurveTo(size, 0, size, r);
-      ctx.lineTo(size, size - r);
-      ctx.quadraticCurveTo(size, size, size - r, size);
-      ctx.lineTo(r, size);
-      ctx.quadraticCurveTo(0, size, 0, size - r);
-      ctx.lineTo(0, r);
-      ctx.quadraticCurveTo(0, 0, r, 0);
-      ctx.closePath();
-      ctx.clip();
-
-      // Fundo vinho/vermelho-escuro
-      ctx.fillStyle = '#8b1e1e';
-      ctx.fillRect(0, 0, size, size);
-
-      // Sombra diagonal longa projetada para o canto inferior esquerdo (flat long shadow)
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.28)';
-      ctx.beginPath();
-      ctx.moveTo(95 * s, 45 * s);
-      ctx.lineTo(175 * s, 80 * s);
-      ctx.lineTo(110 * s, 210 * s);
-      ctx.lineTo(0, 210 * s);
-      ctx.lineTo(0, 140 * s);
-      ctx.lineTo(40 * s, 70 * s);
-      ctx.closePath();
-      ctx.fill();
-
-      // 1. Gráfico de barras ascendente (3 colunas verde-escuro #1e5c3a) à direita
-      ctx.fillStyle = '#1e5c3a';
-      // Barra 1
-      ctx.fillRect(115 * s, 98 * s, 16 * s, 32 * s);
-      // Barra 2
-      ctx.fillRect(137 * s, 82 * s, 16 * s, 48 * s);
-      // Barra 3
-      ctx.fillRect(159 * s, 62 * s, 16 * s, 68 * s);
-
-      // Linha de tendência com seta branca sobre o gráfico apontando para sup-dir
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 3.5 * s;
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
-      ctx.beginPath();
-      ctx.moveTo(112 * s, 94 * s);
-      ctx.lineTo(135 * s, 76 * s);
-      ctx.lineTo(156 * s, 56 * s);
-      ctx.lineTo(176 * s, 44 * s);
-      ctx.stroke();
-
-      // Ponta da seta branca
-      ctx.fillStyle = '#ffffff';
-      ctx.beginPath();
-      ctx.moveTo(178 * s, 43 * s);
-      ctx.lineTo(165 * s, 45 * s);
-      ctx.lineTo(174 * s, 56 * s);
-      ctx.closePath();
-      ctx.fill();
-
-      // 2. Capacete Espartano estilizado (centro-esquerda)
-      // Crista preta no topo
-      ctx.fillStyle = '#1c1b18';
-      ctx.beginPath();
-      ctx.moveTo(56 * s, 30 * s);
-      ctx.bezierCurveTo(80 * s, 24 * s, 102 * s, 36 * s, 105 * s, 60 * s);
-      ctx.lineTo(95 * s, 62 * s);
-      ctx.bezierCurveTo(90 * s, 44 * s, 75 * s, 36 * s, 56 * s, 40 * s);
-      ctx.closePath();
-      ctx.fill();
-
-      // Suporte da crista (creme)
-      ctx.fillStyle = '#f5efe0';
-      ctx.beginPath();
-      ctx.moveTo(58 * s, 40 * s);
-      ctx.quadraticCurveTo(80 * s, 38 * s, 96 * s, 62 * s);
-      ctx.lineTo(90 * s, 66 * s);
-      ctx.quadraticCurveTo(74 * s, 44 * s, 58 * s, 45 * s);
-      ctx.closePath();
-      ctx.fill();
-
-      // Cúpula do elmo (creme/off-white #f5efe0)
-      ctx.fillStyle = '#f5efe0';
-      ctx.beginPath();
-      ctx.moveTo(52 * s, 65 * s);
-      ctx.bezierCurveTo(52 * s, 42 * s, 96 * s, 42 * s, 96 * s, 68 * s);
-      ctx.lineTo(96 * s, 106 * s);
-      // protetor de bochecha direito
-      ctx.lineTo(82 * s, 126 * s);
-      ctx.lineTo(76 * s, 92 * s);
-      // septo nasal central
-      ctx.lineTo(72 * s, 98 * s);
-      ctx.lineTo(68 * s, 92 * s);
-      // protetor de bochecha esquerdo
-      ctx.lineTo(62 * s, 126 * s);
-      ctx.lineTo(48 * s, 106 * s);
-      ctx.closePath();
-      ctx.fill();
-
-      // Viseira / sombras em fenda T espartana (preto/grafite escuro)
-      ctx.fillStyle = '#241a15';
-      ctx.beginPath();
-      // Fenda horizontal dos olhos
-      ctx.moveTo(55 * s, 76 * s);
-      ctx.lineTo(89 * s, 76 * s);
-      ctx.lineTo(87 * s, 83 * s);
-      ctx.lineTo(74 * s, 83 * s);
-      // Fenda vertical central
-      ctx.lineTo(74 * s, 114 * s);
-      ctx.lineTo(70 * s, 114 * s);
-      ctx.lineTo(70 * s, 83 * s);
-      ctx.lineTo(57 * s, 83 * s);
-      ctx.closePath();
-      ctx.fill();
-
-      // Aberturas laterais de bochecha
-      ctx.beginPath();
-      ctx.moveTo(50 * s, 88 * s);
-      ctx.lineTo(58 * s, 88 * s);
-      ctx.lineTo(53 * s, 112 * s);
-      ctx.closePath();
-      ctx.fill();
-
-      ctx.beginPath();
-      ctx.moveTo(94 * s, 88 * s);
-      ctx.lineTo(86 * s, 88 * s);
-      ctx.lineTo(91 * s, 112 * s);
-      ctx.closePath();
-      ctx.fill();
-
-      // 3. Moeda Dourada (#f0b90b) com Cifrão ($) na parte inferior (abaixo e à direita do elmo)
-      const cx = 118 * s;
-      const cy = 138 * s;
-      const rad = 28 * s;
-
-      // Sombra sutil da moeda
-      ctx.fillStyle = 'rgba(0,0,0,0.3)';
-      ctx.beginPath();
-      ctx.arc(cx - 3 * s, cy + 3 * s, rad, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Borda dourada externa
-      ctx.fillStyle = '#d39e00';
-      ctx.beginPath();
-      ctx.arc(cx, cy, rad, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Corpo da moeda dourada
-      ctx.fillStyle = '#f0b90b';
-      ctx.beginPath();
-      ctx.arc(cx, cy, rad - 2.5 * s, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Friso interno
-      ctx.strokeStyle = '#fad04c';
-      ctx.lineWidth = 1.5 * s;
-      ctx.beginPath();
-      ctx.arc(cx, cy, rad - 5 * s, 0, Math.PI * 2);
-      ctx.stroke();
-
-      // Símbolo de cifrão ($) gravado no centro
-      ctx.fillStyle = '#8b5a00';
-      ctx.font = `bold ${Math.round(28 * s)}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('$', cx, cy + 1 * s);
-
-      return canvas;
-    }
-
-    // Inicializar ícones na tela, favicon e manifest
-    function inicializarIconesSistema() {
-      // 1. Canvas de login (96px)
-      const cLogin = document.getElementById('loginBrandCanvas');
-      if (cLogin) {
-        const rendered = mcDesenhaIconeMarca(96);
-        const ctx = cLogin.getContext('2d');
-        ctx.drawImage(rendered, 0, 0);
-      }
-
-      // 2. Canvas de header (32px)
-      const cHeader = document.getElementById('headerBrandCanvas');
-      if (cHeader) {
-        const rendered = mcDesenhaIconeMarca(32);
-        const ctx = cHeader.getContext('2d');
-        ctx.drawImage(rendered, 0, 0);
-      }
-
-      // 3. Favicon via toDataURL
-      const favCanvas = mcDesenhaIconeMarca(64);
-      const favDataUrl = favCanvas.toDataURL('image/png');
-      const linkFavicon = document.getElementById('dynamicFavicon');
-      if (linkFavicon) linkFavicon.href = favDataUrl;
-
-      // 4. Apple Touch Icon
-      const appleTouch = document.getElementById('appleTouchIcon');
-      if (appleTouch) appleTouch.href = favDataUrl;
-
-      // 5. PWA Manifest inline com ícones 192 e 512
-      try {
-        const c192 = mcDesenhaIconeMarca(192).toDataURL('image/png');
-        const c512 = mcDesenhaIconeMarca(512).toDataURL('image/png');
-        const manifestObj = {
-          name: "Royal Wallet",
-          short_name: "Royal",
-          start_url: "./index.html",
-          display: "standalone",
-          theme_color: "#8b1e1e",
-          background_color: "#1a1512",
-          icons: [
-            { src: c192, sizes: "192x192", type: "image/png" },
-            { src: c512, sizes: "512x512", type: "image/png" }
-          ]
-        };
-        const manifestBlob = new Blob([JSON.stringify(manifestObj)], { type: 'application/json' });
-        const manifestUrl = URL.createObjectURL(manifestBlob);
-        const dynManifest = document.getElementById('dynamicManifest');
-        if (dynManifest) dynManifest.href = manifestUrl;
-      } catch (e) {
-        console.warn('Manifest blob setup:', e);
-      }
-    }
-=======
-    /* ====================================================================
-       1) ÍCONE DA MARCA — IMAGEM REAL PNG (URL + CANVAS 1024x1024 PARA DATA URI)
-       ==================================================================== */
-    const ICON_URL = "https://generated-images.adapta.one/pcp1%40mrinox.com.br/01a0d181-72de-7662-9b26-19852d5f8512/2026-09-28T04-24-21-579Z_Original_user_intent_Tool_generated_image_directi.png";
-
-    // Fallback offline: retângulo vermelho #8b1e1e com "RW" em creme centralizado (texto simples, sem elmo)
-    function gerarFallbackIconeDataUrl(size = 1024) {
-      const canvas = document.createElement('canvas');
-      canvas.width = size;
-      canvas.height = size;
-      const ctx = canvas.getContext('2d');
-      ctx.fillStyle = '#8b1e1e';
-      ctx.fillRect(0, 0, size, size);
-      ctx.fillStyle = '#f5efe0';
-      ctx.font = `bold ${Math.round(size * 0.42)}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('RW', size / 2, size / 2);
-      return canvas.toDataURL('image/png');
-    }
-
-    function aplicarMetaIcones(dataUrl) {
-      const linkFavicon = document.getElementById('dynamicFavicon');
-      if (linkFavicon) linkFavicon.href = dataUrl;
-
-      const appleTouch = document.getElementById('appleTouchIcon');
-      if (appleTouch) appleTouch.href = dataUrl;
-
-      try {
-        const manifestObj = {
-          name: "Royal Wallet",
-          short_name: "Royal",
-          start_url: "./index.html",
-          display: "standalone",
-          theme_color: "#8b1e1e",
-          background_color: "#1a1512",
-          icons: [
-            { src: dataUrl, sizes: "192x192", type: "image/png" },
-            { src: dataUrl, sizes: "512x512", type: "image/png" }
-          ]
-        };
-        const manifestBlob = new Blob([JSON.stringify(manifestObj)], { type: 'application/json' });
-        const manifestUrl = URL.createObjectURL(manifestBlob);
-        const dynManifest = document.getElementById('dynamicManifest');
-        if (dynManifest) dynManifest.href = manifestUrl;
-      } catch (e) {
-        console.warn('Manifest blob setup:', e);
-      }
-    }
-
-    function inicializarIconesSistema() {
-      const loginImg = document.getElementById('loginBrandImg');
-      const headerImg = document.getElementById('headerBrandImg');
-
-      const fallbackUrl = gerarFallbackIconeDataUrl(1024);
-
-      if (loginImg) {
-        loginImg.onerror = () => { loginImg.src = fallbackUrl; };
-      }
-      if (headerImg) {
-        headerImg.onerror = () => { headerImg.src = fallbackUrl; };
-      }
-
-      // Carregar a imagem real PNG para desenhar num canvas 1024x1024 e extrair toDataURL()
-      const img = new Image();
-      img.crossOrigin = "anonymous";
-      img.onload = () => {
-        try {
-          const canvas = document.createElement('canvas');
-          canvas.width = 1024;
-          canvas.height = 1024;
-          const ctx = canvas.getContext('2d');
-          ctx.drawImage(img, 0, 0, 1024, 1024);
-          const iconDataUrl = canvas.toDataURL('image/png');
-          aplicarMetaIcones(iconDataUrl);
-        } catch (err) {
-          console.warn("Falha ao exportar canvas para data URL:", err);
-          aplicarMetaIcones(fallbackUrl);
-        }
-      };
-      img.onerror = () => {
-        aplicarMetaIcones(fallbackUrl);
-      };
-      img.src = ICON_URL;
-    }Top Sticky Header */
     .app-header {
       position: sticky;
       top: 0;
@@ -1593,226 +1269,30 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
   <!-- ==================== JAVASCRIPT ==================== -->
   <script>
     /* ====================================================================
-       1) ÍCONE DA MARCA — FIDELIDADE TOTAL AO PNG APROVADO
-       mcDesenhaIconeMarca(size):
-       - Squircle 1:1 fundo vermelho-escuro tijolo/vinho (#8b1e1e)
-       - Centro-esquerda: capacete espartano creme/off-white (#f5efe0), crista preta, viseira/sombras
-       - À direita: gráfico barras 3 colunas verde-escuro (#1e5c3a), seta branca ascendente
-       - Inferior: moeda dourada (#f0b90b) com cifrão $, levemente abaixo/direita do capacete
-       - Sombra diagonal longa projetada para inferior esquerdo
+       1) LOGO ÚNICA — MESMA IMAGEM ORIGINAL EM TODO O APP
        ==================================================================== */
-    function mcDesenhaIconeMarca(size) {
-      const canvas = document.createElement('canvas');
-      canvas.width = size;
-      canvas.height = size;
-      const ctx = canvas.getContext('2d');
-      const s = size / 200; // fator de escala relativo a base 200x200
+    const ICON_URL = "https://generated-images.adapta.one/pcp1%40mrinox.com.br/01a0d181-72de-7662-9b26-19852d5f8512/2026-09-28T04-24-21-579Z_Original_user_intent_Tool_generated_image_directi.png";
 
-      ctx.clearRect(0, 0, size, size);
-
-      // Squircle app icon
-      const r = 40 * s;
-      ctx.beginPath();
-      ctx.moveTo(r, 0);
-      ctx.lineTo(size - r, 0);
-      ctx.quadraticCurveTo(size, 0, size, r);
-      ctx.lineTo(size, size - r);
-      ctx.quadraticCurveTo(size, size, size - r, size);
-      ctx.lineTo(r, size);
-      ctx.quadraticCurveTo(0, size, 0, size - r);
-      ctx.lineTo(0, r);
-      ctx.quadraticCurveTo(0, 0, r, 0);
-      ctx.closePath();
-      ctx.clip();
-
-      // Fundo vinho/vermelho-escuro
-      ctx.fillStyle = '#8b1e1e';
-      ctx.fillRect(0, 0, size, size);
-
-      // Sombra diagonal longa projetada para o canto inferior esquerdo (flat long shadow)
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.28)';
-      ctx.beginPath();
-      ctx.moveTo(95 * s, 45 * s);
-      ctx.lineTo(175 * s, 80 * s);
-      ctx.lineTo(110 * s, 210 * s);
-      ctx.lineTo(0, 210 * s);
-      ctx.lineTo(0, 140 * s);
-      ctx.lineTo(40 * s, 70 * s);
-      ctx.closePath();
-      ctx.fill();
-
-      // 1. Gráfico de barras ascendente (3 colunas verde-escuro #1e5c3a) à direita
-      ctx.fillStyle = '#1e5c3a';
-      // Barra 1
-      ctx.fillRect(115 * s, 98 * s, 16 * s, 32 * s);
-      // Barra 2
-      ctx.fillRect(137 * s, 82 * s, 16 * s, 48 * s);
-      // Barra 3
-      ctx.fillRect(159 * s, 62 * s, 16 * s, 68 * s);
-
-      // Linha de tendência com seta branca sobre o gráfico apontando para sup-dir
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 3.5 * s;
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
-      ctx.beginPath();
-      ctx.moveTo(112 * s, 94 * s);
-      ctx.lineTo(135 * s, 76 * s);
-      ctx.lineTo(156 * s, 56 * s);
-      ctx.lineTo(176 * s, 44 * s);
-      ctx.stroke();
-
-      // Ponta da seta branca
-      ctx.fillStyle = '#ffffff';
-      ctx.beginPath();
-      ctx.moveTo(178 * s, 43 * s);
-      ctx.lineTo(165 * s, 45 * s);
-      ctx.lineTo(174 * s, 56 * s);
-      ctx.closePath();
-      ctx.fill();
-
-      // 2. Capacete Espartano estilizado (centro-esquerda)
-      // Crista preta no topo
-      ctx.fillStyle = '#1c1b18';
-      ctx.beginPath();
-      ctx.moveTo(56 * s, 30 * s);
-      ctx.bezierCurveTo(80 * s, 24 * s, 102 * s, 36 * s, 105 * s, 60 * s);
-      ctx.lineTo(95 * s, 62 * s);
-      ctx.bezierCurveTo(90 * s, 44 * s, 75 * s, 36 * s, 56 * s, 40 * s);
-      ctx.closePath();
-      ctx.fill();
-
-      // Suporte da crista (creme)
-      ctx.fillStyle = '#f5efe0';
-      ctx.beginPath();
-      ctx.moveTo(58 * s, 40 * s);
-      ctx.quadraticCurveTo(80 * s, 38 * s, 96 * s, 62 * s);
-      ctx.lineTo(90 * s, 66 * s);
-      ctx.quadraticCurveTo(74 * s, 44 * s, 58 * s, 45 * s);
-      ctx.closePath();
-      ctx.fill();
-
-      // Cúpula do elmo (creme/off-white #f5efe0)
-      ctx.fillStyle = '#f5efe0';
-      ctx.beginPath();
-      ctx.moveTo(52 * s, 65 * s);
-      ctx.bezierCurveTo(52 * s, 42 * s, 96 * s, 42 * s, 96 * s, 68 * s);
-      ctx.lineTo(96 * s, 106 * s);
-      // protetor de bochecha direito
-      ctx.lineTo(82 * s, 126 * s);
-      ctx.lineTo(76 * s, 92 * s);
-      // septo nasal central
-      ctx.lineTo(72 * s, 98 * s);
-      ctx.lineTo(68 * s, 92 * s);
-      // protetor de bochecha esquerdo
-      ctx.lineTo(62 * s, 126 * s);
-      ctx.lineTo(48 * s, 106 * s);
-      ctx.closePath();
-      ctx.fill();
-
-      // Viseira / sombras em fenda T espartana (preto/grafite escuro)
-      ctx.fillStyle = '#241a15';
-      ctx.beginPath();
-      // Fenda horizontal dos olhos
-      ctx.moveTo(55 * s, 76 * s);
-      ctx.lineTo(89 * s, 76 * s);
-      ctx.lineTo(87 * s, 83 * s);
-      ctx.lineTo(74 * s, 83 * s);
-      // Fenda vertical central
-      ctx.lineTo(74 * s, 114 * s);
-      ctx.lineTo(70 * s, 114 * s);
-      ctx.lineTo(70 * s, 83 * s);
-      ctx.lineTo(57 * s, 83 * s);
-      ctx.closePath();
-      ctx.fill();
-
-      // Aberturas laterais de bochecha
-      ctx.beginPath();
-      ctx.moveTo(50 * s, 88 * s);
-      ctx.lineTo(58 * s, 88 * s);
-      ctx.lineTo(53 * s, 112 * s);
-      ctx.closePath();
-      ctx.fill();
-
-      ctx.beginPath();
-      ctx.moveTo(94 * s, 88 * s);
-      ctx.lineTo(86 * s, 88 * s);
-      ctx.lineTo(91 * s, 112 * s);
-      ctx.closePath();
-      ctx.fill();
-
-      // 3. Moeda Dourada (#f0b90b) com Cifrão ($) na parte inferior (abaixo e à direita do elmo)
-      const cx = 118 * s;
-      const cy = 138 * s;
-      const rad = 28 * s;
-
-      // Sombra sutil da moeda
-      ctx.fillStyle = 'rgba(0,0,0,0.3)';
-      ctx.beginPath();
-      ctx.arc(cx - 3 * s, cy + 3 * s, rad, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Borda dourada externa
-      ctx.fillStyle = '#d39e00';
-      ctx.beginPath();
-      ctx.arc(cx, cy, rad, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Corpo da moeda dourada
-      ctx.fillStyle = '#f0b90b';
-      ctx.beginPath();
-      ctx.arc(cx, cy, rad - 2.5 * s, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Friso interno
-      ctx.strokeStyle = '#fad04c';
-      ctx.lineWidth = 1.5 * s;
-      ctx.beginPath();
-      ctx.arc(cx, cy, rad - 5 * s, 0, Math.PI * 2);
-      ctx.stroke();
-
-      // Símbolo de cifrão ($) gravado no centro
-      ctx.fillStyle = '#8b5a00';
-      ctx.font = `bold ${Math.round(28 * s)}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('$', cx, cy + 1 * s);
-
-      return canvas;
-    }
-
-    // Inicializar ícones na tela, favicon e manifest
     function inicializarIconesSistema() {
-      // 1. Canvas de login (96px)
-      const cLogin = document.getElementById('loginBrandCanvas');
-      if (cLogin) {
-        const rendered = mcDesenhaIconeMarca(96);
-        const ctx = cLogin.getContext('2d');
-        ctx.drawImage(rendered, 0, 0);
-      }
+      // Login e cabeçalho usam exatamente o mesmo PNG.
+      const loginImg = document.getElementById('loginBrandImg');
+      const headerImg = document.getElementById('headerBrandImg');
+      if (loginImg) loginImg.src = ICON_URL;
+      if (headerImg) headerImg.src = ICON_URL;
 
-      // 2. Canvas de header (32px)
-      const cHeader = document.getElementById('headerBrandCanvas');
-      if (cHeader) {
-        const rendered = mcDesenhaIconeMarca(32);
-        const ctx = cHeader.getContext('2d');
-        ctx.drawImage(rendered, 0, 0);
-      }
-
-      // 3. Favicon via toDataURL
-      const favCanvas = mcDesenhaIconeMarca(64);
-      const favDataUrl = favCanvas.toDataURL('image/png');
+      // Favicon usa exatamente o mesmo PNG.
       const linkFavicon = document.getElementById('dynamicFavicon');
-      if (linkFavicon) linkFavicon.href = favDataUrl;
+      if (linkFavicon) {
+        linkFavicon.href = ICON_URL;
+        linkFavicon.type = 'image/png';
+      }
 
-      // 4. Apple Touch Icon
+      // Ícone da tela inicial do iPhone usa exatamente o mesmo PNG.
       const appleTouch = document.getElementById('appleTouchIcon');
-      if (appleTouch) appleTouch.href = favDataUrl;
+      if (appleTouch) appleTouch.href = ICON_URL;
 
-      // 5. PWA Manifest inline com ícones 192 e 512
+      // Manifest PWA: 192 e 512 apontam para a mesma imagem original, sem redesenho.
       try {
-        const c192 = mcDesenhaIconeMarca(192).toDataURL('image/png');
-        const c512 = mcDesenhaIconeMarca(512).toDataURL('image/png');
         const manifestObj = {
           name: "Royal Wallet",
           short_name: "Royal",
@@ -1821,8 +1301,8 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
           theme_color: "#8b1e1e",
           background_color: "#1a1512",
           icons: [
-            { src: c192, sizes: "192x192", type: "image/png" },
-            { src: c512, sizes: "512x512", type: "image/png" }
+            { src: ICON_URL, sizes: "192x192", type: "image/png" },
+            { src: ICON_URL, sizes: "512x512", type: "image/png" }
           ]
         };
         const manifestBlob = new Blob([JSON.stringify(manifestObj)], { type: 'application/json' });
@@ -1830,7 +1310,7 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
         const dynManifest = document.getElementById('dynamicManifest');
         if (dynManifest) dynManifest.href = manifestUrl;
       } catch (e) {
-        console.warn('Manifest blob setup:', e);
+        console.warn('Manifest setup:', e);
       }
     }
 
