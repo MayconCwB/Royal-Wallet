@@ -156,7 +156,40 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
       flex-direction: column;
     }
 
-    /* Header & Navigation */
+       2) PWA — INSTALAÇÃO NATIVA REAL NO ANDROID / IOS / DESKTOP
+=======
+    /* ==========================================================================
+       FONTE ÚNICA DE VERDADE DO CAMINHO DO DOCUMENTO
+       ========================================================================== */
+    function mcDocPath() {
+      // 1. Se existe usuário autenticado no Firebase real (SDK compat ou modular)
+      if (window.firebase && firebase.auth) {
+        try {
+          const fbUser = firebase.auth().currentUser;
+          if (fbUser && fbUser.uid) {
+            return fbUser.uid;
+          }
+        } catch (e) {}
+      }
+
+      // 2. Se o usuário está logado via estado da sessão em memória (garantindo UID de conta)
+      if (currentUser && currentUser.uid) {
+        if (!currentUser.uid.startsWith('usr_')) {
+          return currentUser.uid;
+        }
+      }
+
+      // 3. Modo sem conta (local real): retorna ID local usr_*
+      let localId = localStorage.getItem('mcLocalUserId');
+      if (!localId) {
+        localId = 'usr_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
+        localStorage.setItem('mcLocalUserId', localId);
+      }
+      return localId;
+    }
+
+    /* ==========================================================================
+       2) PWA — INSTALAÇÃO NATIVA REAL NO ANDROID / IOS / DESKTOPHeader & Navigation */
     .mc-header {
       background: var(--surface);
       border-bottom: 1px solid var(--border);
@@ -1102,7 +1135,7 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
           err.code = 'auth/weak-password';
           throw err;
         }
-        const uid = 'usr_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
+        const uid = 'uid_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
         const user = {
           uid,
           email: email.toLowerCase(),
@@ -1128,6 +1161,11 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
           err.code = 'auth/invalid-credential';
           throw err;
         }
+        if (user.uid && user.uid.startsWith('usr_')) {
+          user.uid = 'uid_' + user.uid.replace(/^usr_/, '');
+          users[email.toLowerCase()] = user;
+          this.saveUsers(users);
+        }
         return user;
       },
 
@@ -1142,10 +1180,22 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
         }
       },
 
-      async setDoc(uid, payload) {
+      async setDoc(uid, payload, options = {}) {
         await new Promise(r => setTimeout(r, 150));
         try {
-          localStorage.setItem(this.dbKeyPrefix + uid, JSON.stringify(payload));
+          if (options && options.merge) {
+            const raw = localStorage.getItem(this.dbKeyPrefix + uid);
+            let existing = raw ? JSON.parse(raw) : {};
+            let merged = { ...existing, ...payload };
+            for (let k in payload) {
+              if (payload[k] === '__DELETE_FIELD__' || payload[k] === undefined) {
+                delete merged[k];
+              }
+            }
+            localStorage.setItem(this.dbKeyPrefix + uid, JSON.stringify(merged));
+          } else {
+            localStorage.setItem(this.dbKeyPrefix + uid, JSON.stringify(payload));
+          }
           return true;
         } catch (e) {
           throw new Error('quota-exceeded');
@@ -1457,6 +1507,8 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
         // Logout
         currentUser = null;
         localStorage.removeItem('mcModoLocal');
+        localStorage.removeItem('mcStatusRegrasFirestore');
+        mcStatusRegrasFirestore = null;
         document.getElementById('telaLogin').style.display = 'flex';
         mcToast('Você saiu da sua conta.', '');
       } else {
@@ -1469,8 +1521,37 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
       document.getElementById('mcHeaderUser').innerText = `Olá, ${user.displayName || user.email.split('@')[0]}!`;
       document.getElementById('mcHeaderAuthBtn').innerText = 'Sair';
 
-      // Verificar dados da nuvem vs local
-      const cloudDoc = await CloudSyncService.getDoc(user.uid).catch(() => null);
+      // Garantir que currentUser possui o UID correto (não local)
+      if (user && user.uid && user.uid.startsWith('usr_')) {
+        user.uid = 'uid_' + user.uid.replace(/^usr_/, '');
+      }
+      currentUser = user;
+
+      const docId = mcDocPath();
+
+      // Migração no login: checar se existem dados locais sob um ID local usr_*
+      const localId = localStorage.getItem('mcLocalUserId');
+      if (localId && localId.startsWith('usr_')) {
+        const dadosLocaisLegado = localStorage.getItem('mc_carteiras_' + localId);
+        if (dadosLocaisLegado && (!db.movimentos.length && !db.recorrentes.length && !db.parcelas.length)) {
+          try {
+            const parsed = JSON.parse(dadosLocaisLegado);
+            if (parsed && parsed.dados) db = sanitizarDB(parsed.dados);
+          } catch (e) {}
+        }
+      }
+
+      // Buscar documento na nuvem pelo caminho oficial carteiras/{uid}
+      let cloudDoc = null;
+      try {
+        if (window.firebase && firebase.firestore) {
+          const snap = await firebase.firestore().collection('carteiras').doc(docId).get();
+          if (snap.exists) cloudDoc = snap.data();
+        } else {
+          cloudDoc = await CloudSyncService.getDoc(docId);
+        }
+      } catch (e) {}
+
       const localTemDados = (db.movimentos.length + db.recorrentes.length + db.parcelas.length + db.dividas.length + db.metas.length) > 0;
       const nuvemTemDados = cloudDoc && cloudDoc.dados && (
         (cloudDoc.dados.movimentos && cloudDoc.dados.movimentos.length > 0) ||
@@ -1485,9 +1566,14 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
         db = sanitizarDB(cloudDoc.dados);
         salvarLocalmente(false);
         mcToast('☁️ Dados carregados da sua nuvem.', 'toast-success');
+        await executarSyncNuvem();
       } else {
-        // Se a nuvem estiver vazia e houver local, sincroniza imediatamente
-        salvarDados();
+        // Se a nuvem estiver vazia, forçar save e sincronização imediata do db atual
+        salvarLocalmente(true);
+        await executarSyncNuvem();
+        if (localTemDados) {
+          mcToast('📱 Dados locais migrados para a sua conta na nuvem!', 'toast-success');
+        }
       }
 
       atualizarSyncStatus(new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }));
@@ -1575,30 +1661,49 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
 
     async function executarSyncNuvem() {
       if (!currentUser) return;
+      const docId = mcDocPath();
       try {
         const payload = {
           dados: db,
-          nome: currentUser.displayName,
+          nome: currentUser.displayName || currentUser.email || 'Usuário',
           atualizadoEm: new Date().toISOString()
         };
-        await CloudSyncService.setDoc(currentUser.uid, payload);
+
+        if (window.firebase && firebase.firestore) {
+          const fs = firebase.firestore();
+          await fs.collection('carteiras').doc(docId).set(payload);
+          // Confirmação pós-salvamento via getDoc
+          const snap = await fs.collection('carteiras').doc(docId).get();
+          if (!snap.exists) {
+            throw new Error('Falha na confirmação de leitura pós-salvamento');
+          }
+        } else {
+          await CloudSyncService.setDoc(docId, payload);
+          // Confirmação pós-salvamento via getDoc
+          const conf = await CloudSyncService.getDoc(docId);
+          if (!conf) {
+            throw new Error('Falha na confirmação de leitura pós-salvamento');
+          }
+        }
+
         const agora = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-        atualizarSyncStatus(agora);
+        atualizarSyncStatus(agora, false, true);
         mcUltimoErro = null;
         localStorage.removeItem('mcUltimoErro');
         mcFilaSync = [];
         localStorage.removeItem('mcFilaSync');
       } catch (err) {
-        mcUltimoErro = `Erro [${new Date().toLocaleTimeString()}]: ${err.message || 'Falha de comunicação com Firebase'}`;
+        const cod = err.code || err.message || 'Falha de comunicação com Firebase';
+        mcUltimoErro = `Erro [${new Date().toLocaleTimeString()}]: ${cod}`;
         localStorage.setItem('mcUltimoErro', mcUltimoErro);
-        mcFilaSync.push({ uid: currentUser.uid, data: Date.now() });
+        mcFilaSync.push({ uid: docId, data: Date.now() });
         localStorage.setItem('mcFilaSync', JSON.stringify(mcFilaSync));
         atualizarSyncStatus(null, true);
         mcToast('⚠️ Falha ao sincronizar na nuvem. Salvo localmente.', 'toast-error');
       }
     }
 
-    function atualizarSyncStatus(hora, erro = false) {
+    function atualizarSyncStatus(hora, erro = false, confirmado = false) {
       const bar = document.getElementById('mcSyncBar');
       const text = document.getElementById('mcSyncStatusText');
       const icon = document.getElementById('mcSyncStatusIcon');
@@ -1619,7 +1724,7 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
       } else if (hora) {
         bar.className = 'mc-sync-bar';
         icon.innerText = '☁️';
-        text.innerText = `Sincronizado ${hora}`;
+        text.innerText = confirmado ? `Sincronizado ${hora} (confirmado)` : `Sincronizado ${hora}`;
         btnErr.style.display = 'none';
       } else {
         bar.className = 'mc-sync-bar';
@@ -1675,11 +1780,17 @@ match /carteiras/{userId} {
           users[currentUser.email].displayName = novoNome;
           CloudSyncService.saveUsers(users);
         }
-        await CloudSyncService.setDoc(currentUser.uid, {
+        const docId = mcDocPath();
+        const payload = {
           dados: db,
           nome: novoNome,
           atualizadoEm: new Date().toISOString()
-        }).catch(() => {});
+        };
+        if (window.firebase && firebase.firestore) {
+          await firebase.firestore().collection('carteiras').doc(docId).set(payload, { merge: true }).catch(() => {});
+        } else {
+          await CloudSyncService.setDoc(docId, payload, { merge: true }).catch(() => {});
+        }
         document.getElementById('mcHeaderUser').innerText = `Olá, ${novoNome}!`;
       } else {
         document.getElementById('mcHeaderUser').innerText = `Olá, ${novoNome}!`;
@@ -1727,11 +1838,14 @@ match /carteiras/{userId} {
       mcCloseModal();
 
       try {
-        const uid = currentUser.uid;
-        // 1. Apaga dados da nuvem
-        await CloudSyncService.deleteDoc(uid);
-        // 2. Apaga usuário
-        await CloudSyncService.deleteUser(uid);
+        const docId = mcDocPath();
+        if (window.firebase && firebase.firestore) {
+          await firebase.firestore().collection('carteiras').doc(docId).delete().catch(() => {});
+        }
+        await CloudSyncService.deleteDoc(docId);
+        if (currentUser && currentUser.uid) {
+          await CloudSyncService.deleteUser(currentUser.uid);
+        }
         // 3. Limpar localStorage
         localStorage.removeItem('minhaCarteiraV5');
         localStorage.removeItem('minhaCarteiraV5_bk');
@@ -1740,6 +1854,8 @@ match /carteiras/{userId} {
         localStorage.removeItem('mcNomeUsuario');
         localStorage.removeItem('mcUltimoErro');
         localStorage.removeItem('mcFilaSync');
+        localStorage.removeItem('mcStatusRegrasFirestore');
+        mcStatusRegrasFirestore = null;
 
         // Reset em memória
         db = sanitizarDB({});
@@ -1791,11 +1907,17 @@ match /carteiras/{userId} {
 
       if (currentUser) {
         try {
-          await CloudSyncService.setDoc(currentUser.uid, {
+          const docId = mcDocPath();
+          const payload = {
             dados: db,
-            nome: currentUser.displayName,
+            nome: currentUser.displayName || currentUser.email,
             atualizadoEm: agoraISO
-          });
+          };
+          if (window.firebase && firebase.firestore) {
+            await firebase.firestore().collection('carteiras').doc(docId).set(payload);
+          } else {
+            await CloudSyncService.setDoc(docId, payload);
+          }
         } catch (e) {
           mcToast('Aviso: falha ao limpar na nuvem. Verifique a rede.', 'toast-error');
         }
@@ -3012,15 +3134,44 @@ match /carteiras/{userId} {
     /* ==========================================================================
        9) BACKUP & DIAGNÓSTICO
        ========================================================================== */
+    let mcStatusRegrasFirestore = localStorage.getItem('mcStatusRegrasFirestore') || null;
+
     function mcRenderBackup() {
       const diagEl = document.getElementById('diagNuvemInfo');
       const agora = new Date().toLocaleTimeString('pt-BR');
 
+      let regrasTexto = '<span class="muted">Não testado (clique em "🧪 Testar conexão")</span>';
+      if (mcStatusRegrasFirestore === 'ok') {
+        regrasTexto = '<span style="color:#10b981; font-weight:600;">✅ Regras permitem gravar/ler sua carteira</span>';
+      } else if (mcStatusRegrasFirestore === 'permission-denied') {
+        regrasTexto = '<span style="color:#ef4444; font-weight:600;">❌ As regras estão bloqueando até SUA própria carteira — revisar as regras</span>';
+      } else if (mcStatusRegrasFirestore === 'erro') {
+        regrasTexto = '<span style="color:#ef4444;">❌ Falha na conexão ou validação de regras</span>';
+      }
+
+      const path = mcDocPath();
+      const isUsrLocal = path.startsWith('usr_');
+      const fbAuthUser = (window.firebase && firebase.auth && firebase.auth().currentUser);
+      const isLogged = !!(fbAuthUser || currentUser);
+
+      let fonteTag = '';
+      if (isLogged && isUsrLocal) {
+        fonteTag = `<span style="color:#ef4444; font-weight:700; margin-left:0.5rem;">⚠️ BUG: logado mas usando ID local — recarregue o app</span>`;
+      } else if (isUsrLocal) {
+        fonteTag = `<span style="color:var(--text-muted); margin-left:0.5rem;">(ID local (modo sem conta))</span>`;
+      } else {
+        fonteTag = `<span style="color:#10b981; font-weight:600; margin-left:0.5rem;">(UID do Firebase (correto))</span>`;
+      }
+
+      const caminhoDadosHTML = `<code style="font-size:0.8rem; background:rgba(255,255,255,0.06); padding:0.15rem 0.4rem; border-radius:4px; user-select:all;">carteiras/${path}</code> ${fonteTag}
+        <button type="button" class="btn btn-xs btn-outline" style="margin-left:0.35rem; padding:0.1rem 0.4rem;" onclick="navigator.clipboard && navigator.clipboard.writeText('carteiras/${path}'); mcToast('Caminho copiado! 📋');">Copiar</button>`;
+
       diagEl.innerHTML = `
         <div><strong>Projeto Firebase:</strong> <code>${FIREBASE_CONFIG.projectId}</code></div>
         <div><strong>Auth Domain:</strong> <code>${FIREBASE_CONFIG.authDomain}</code></div>
-        <div><strong>Bibliotecas:</strong> Compat SDK Sequencial + Storage Espelho</div>
-        <div><strong>Sessão Atual:</strong> ${currentUser ? `👤 Logado como <code>${currentUser.email}</code>` : '📱 Modo Local (sem login)'}</div>
+        <div><strong>Caminho dos seus dados:</strong> ${caminhoDadosHTML}</div>
+        <div><strong>Regras do Firestore:</strong> ${regrasTexto}</div>
+        <div><strong>Sessão Atual:</strong> ${isLogged ? `👤 Logado como <code>${(fbAuthUser && fbAuthUser.email) || (currentUser && currentUser.email) || 'usuário'}</code>` : '📱 Modo Local (sem login)'}</div>
         <div><strong>Última Sincronização:</strong> ${agora}</div>
         <div><strong>Fila de Retentativas:</strong> ${mcFilaSync.length} pacote(s) pendente(s)</div>
         ${mcUltimoErro ? `<div style="color:#ef4444; margin-top:0.4rem;"><strong>ÚLTIMO ERRO DE SYNC:</strong> ${mcUltimoErro}</div>` : '<div style="color:#10b981;">Nenhum erro de sincronização pendente.</div>'}
@@ -3029,24 +3180,83 @@ match /carteiras/{userId} {
 
     async function mcTestarConexaoNuvem() {
       const resEl = document.getElementById('diagTesteResult');
-      resEl.innerHTML = '<span class="muted">Testando comunicação setDoc/getDoc...</span>';
+      const docId = mcDocPath();
+      const fbAuthUser = (window.firebase && firebase.auth && firebase.auth().currentUser);
+      const isLogged = !!(fbAuthUser || currentUser);
+
+      if (!isLogged) {
+        if (resEl) {
+          resEl.innerHTML = '<div style="color:#fbbf24; font-weight:600;">🔑 Faça login na sua conta para testar a conexão.</div>';
+        }
+        mcToast('🔑 Faça login na sua conta para testar a conexão.', '');
+        return;
+      }
+
+      if (resEl) {
+        resEl.innerHTML = `<span class="muted">⏳ Testando gravação e leitura em <code>carteiras/${docId}</code>...</span>`;
+      }
+
+      const timestampTeste = Date.now();
 
       try {
-        const testId = currentUser ? currentUser.uid : 'teste_ping';
-        await CloudSyncService.setDoc('__ping_teste__', { ping: true, data: Date.now() });
-        const lido = await CloudSyncService.getDoc('__ping_teste__');
-        if (lido && lido.ping) {
-          resEl.innerHTML = '<div style="color:#10b981; font-weight:600;">✅ Conexão OK — gravou e leu da nuvem perfeitamente!</div>';
+        if (window.firebase && firebase.firestore) {
+          const fs = firebase.firestore();
+          const docRef = fs.collection('carteiras').doc(docId);
+          // 1. Gravar com merge no documento do próprio usuário logado
+          await docRef.set({ testeConexao: timestampTeste }, { merge: true });
+          // 2. Ler o mesmo documento
+          const snap = await docRef.get();
+          if (!snap.exists) {
+            throw { code: 'not-found', message: 'Documento não encontrado após gravação' };
+          }
+          // 3. Remover campo temporário
+          try {
+            await docRef.update({ testeConexao: firebase.firestore.FieldValue.delete() });
+          } catch (eRem) {
+            const dadosAtuais = snap.data() || {};
+            delete dadosAtuais.testeConexao;
+            await docRef.set(dadosAtuais);
+          }
         } else {
-          throw new Error('Falha na validação do payload lido');
+          // Fallback via simulador resiliente
+          await CloudSyncService.setDoc(docId, { testeConexao: timestampTeste }, { merge: true });
+          const doc = await CloudSyncService.getDoc(docId);
+          if (!doc) {
+            throw { code: 'not-found', message: 'Documento não retornado' };
+          }
+          await CloudSyncService.setDoc(docId, { testeConexao: '__DELETE_FIELD__' }, { merge: true });
         }
+
+        mcStatusRegrasFirestore = 'ok';
+        localStorage.setItem('mcStatusRegrasFirestore', 'ok');
+        if (resEl) {
+          resEl.innerHTML = '<div style="color:#10b981; font-weight:600;">✅ Conexão OK — gravou e leu na SUA carteira</div>';
+        }
+        mcToast('✅ Conexão OK — gravou e leu na SUA carteira', 'toast-success');
+        mcRenderBackup();
       } catch (err) {
-        resEl.innerHTML = `
-          <div style="color:#ef4444; font-weight:600;">❌ Falhou: ${err.message || 'Erro de comunicação'}</div>
-          <div style="font-size:0.75rem; color:var(--text-muted); margin-top:0.35rem;">
-            Dica: Se a mensagem for permission-denied, configure as regras de leitura/escrita no Console do Firebase.
-          </div>
-        `;
+        const codigoErro = err.code || (err.message && err.message.includes('permission-denied') ? 'permission-denied' : (err.message || 'unknown-error'));
+        mcUltimoErro = `Falha no teste [${new Date().toLocaleTimeString()}]: ${codigoErro}`;
+        localStorage.setItem('mcUltimoErro', mcUltimoErro);
+
+        if (codigoErro === 'permission-denied' || String(codigoErro).toLowerCase().includes('permission')) {
+          mcStatusRegrasFirestore = 'permission-denied';
+          localStorage.setItem('mcStatusRegrasFirestore', 'permission-denied');
+        } else {
+          mcStatusRegrasFirestore = 'erro';
+          localStorage.setItem('mcStatusRegrasFirestore', 'erro');
+        }
+
+        if (resEl) {
+          resEl.innerHTML = `
+            <div style="color:#ef4444; font-weight:600;">❌ Falhou: ${codigoErro} — me envie este código</div>
+            <div style="font-size:0.75rem; color:var(--text-muted); margin-top:0.35rem;">
+              O erro foi registrado em mcUltimoErro.
+            </div>
+          `;
+        }
+        mcToast(`❌ Falhou: ${codigoErro} — me envie este código`, 'toast-error');
+        mcRenderBackup();
       }
     }
 
