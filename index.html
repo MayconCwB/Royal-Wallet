@@ -119,6 +119,16 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
 }
 
 </style>
+  <style>
+    /* Indicador de conectividade/sincronização */
+    #offlineSyncPill {
+      position: fixed; right: 12px; bottom: 12px; z-index: 9999;
+      padding: 7px 11px; border-radius: 999px; font-size: 12px; font-weight: 700;
+      background: var(--surface); color: var(--text); border: 1px solid var(--border);
+      box-shadow: 0 4px 14px rgba(0,0,0,.25); opacity: .94;
+      pointer-events: none; transition: opacity .2s ease;
+    }
+  </style>
   <!-- Fixed Shell JS -->
   
 
@@ -2310,18 +2320,53 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
       return res.data;
     }
 
-    // Firestore Doc Save/Load (Gravação estruturada nativa v2 + Leitura compatível v1/v2)
-    async function mcSaveDoc(uid, idToken, dataObj) {
+    // Firestore Doc Save/Load — com fila offline e sincronização automática.
+    const OFFLINE_QUEUE_KEY = 'royalSyncQueueV1';
+    const LOCAL_DATA_KEY = 'royalLocalData';
+
+    function readOfflineQueue() {
+      try { return JSON.parse(localStorage.getItem(OFFLINE_QUEUE_KEY) || '[]'); } catch { return []; }
+    }
+
+    function writeOfflineQueue(queue) {
+      try { localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(queue)); } catch (e) { console.warn('Fila offline:', e); }
+      const queueEl = document.getElementById('diagQueueCount');
+      if (queueEl) queueEl.textContent = queue.length ? String(queue.length) + ' pendente(s)' : '0';
+    }
+
+    function queueOfflineSnapshot(dataObj) {
+      const queue = readOfflineQueue();
+      // Mantemos somente o snapshot mais recente: o estado completo já contém todas as alterações.
+      const item = {
+        uid: AppState.user?.uid || null,
+        data: dataObj,
+        queuedAt: Date.now()
+      };
+      if (!item.uid) return;
+      const filtered = queue.filter(q => q.uid && item.uid && q.uid !== item.uid);
+      filtered.push(item);
+      writeOfflineQueue(filtered);
+    }
+
+    async function mcSaveDoc(uid, idToken, dataObj, options = {}) {
       if (!uid || AppState.isLocal) {
-        localStorage.setItem('royalLocalData', JSON.stringify(dataObj));
+        localStorage.setItem(LOCAL_DATA_KEY, JSON.stringify(dataObj));
         setSyncBadge("📱 Salvo no aparelho");
         return true;
       }
 
+      // Sempre salva primeiro localmente. Se a rede falhar, a fila garante o envio posterior.
+      localStorage.setItem(LOCAL_DATA_KEY, JSON.stringify(dataObj));
+
+      if (!navigator.onLine) {
+        queueOfflineSnapshot(dataObj);
+        setSyncBadge("📴 Offline — salvo no aparelho");
+        logEvent("Sem internet: alteração colocada na fila de sincronização.");
+        return false;
+      }
+
       setSyncBadge("☁️ Sincronizando...");
       const url = `${FS_URL}/${uid}`;
-      
-      // Gravação com campos de topo nativos e estruturados no Firestore (sem stringify gigante)
       const firestoreBody = {
         fields: {
           nome: { stringValue: AppState.user?.nome || '' },
@@ -2336,42 +2381,61 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
         }
       };
 
-      let res = await fbFetch(url, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${idToken}`
-        },
-        body: JSON.stringify(firestoreBody)
-      });
-
-      if (res.status === 401 && AppState.user?.refreshToken) {
-        logEvent("Token expirado, renovando sessão...");
-        const refreshed = await mcRefresh(AppState.user.refreshToken);
-        AppState.user.idToken = refreshed.idToken;
-        AppState.user.refreshToken = refreshed.refreshToken;
-        persistUserSession(AppState.user);
-        res = await fbFetch(url, {
+      try {
+        let res = await fbFetch(url, {
           method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${refreshed.idToken}`
-          },
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${idToken}` },
           body: JSON.stringify(firestoreBody)
         });
-      }
 
-      if (res.status === 200) {
-        setSyncBadge("☁️ Sincronizado (confirmado)");
-        const lastSyncEl = document.getElementById('diagLastSync');
-        if (lastSyncEl) lastSyncEl.textContent = new Date().toLocaleTimeString('pt-BR');
-        logEvent("Gravação estruturada (v2) confirmada");
-        return true;
-      } else {
-        setSyncBadge("⚠️ Erro de sincronização");
-        logEvent(`Erro ao salvar na nuvem: HTTP ${res.status}`);
+        if (res.status === 401 && AppState.user?.refreshToken && navigator.onLine) {
+          logEvent("Token expirado, renovando sessão...");
+          const refreshed = await mcRefresh(AppState.user.refreshToken);
+          AppState.user.idToken = refreshed.idToken;
+          AppState.user.refreshToken = refreshed.refreshToken;
+          AppState.user.tokenExpiresAt = Date.now() + (Number(refreshed.expiresIn || 3600) * 1000);
+          persistUserSession(AppState.user);
+          res = await fbFetch(url, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${refreshed.idToken}` },
+            body: JSON.stringify(firestoreBody)
+          });
+        }
+
+        if (res.status === 200) {
+          // Remove somente o snapshot desta conta que já foi confirmado.
+          const queue = readOfflineQueue().filter(q => !(q.uid === uid && Number(q.data?.updatedAt || 0) <= Number(dataObj.updatedAt || 0)));
+          writeOfflineQueue(queue);
+          setSyncBadge("☁️ Sincronizado");
+          const lastSyncEl = document.getElementById('diagLastSync');
+          if (lastSyncEl) lastSyncEl.textContent = new Date().toLocaleTimeString('pt-BR');
+          logEvent("Sincronização com a nuvem confirmada.");
+          return true;
+        }
+
+        if (res.status === 401 || res.status === 403 || res.status >= 500) {
+          queueOfflineSnapshot(dataObj);
+        }
+        setSyncBadge("⚠️ Aguardando sincronização");
+        logEvent(`Nuvem indisponível: HTTP ${res.status}. Dados preservados no aparelho.`);
+        return false;
+      } catch (err) {
+        queueOfflineSnapshot(dataObj);
+        setSyncBadge("📴 Sem conexão — aguardando sincronização");
+        logEvent("Falha de rede: dados preservados no aparelho e na fila offline.");
         return false;
       }
+    }
+
+    async function syncPendingCloud() {
+      if (AppState.isLocal || !AppState.user || !navigator.onLine) return false;
+      const queue = readOfflineQueue().filter(q => q.uid === AppState.user.uid);
+      if (!queue.length) return false;
+
+      const latest = queue.reduce((a, b) => Number(a.data?.updatedAt || 0) >= Number(b.data?.updatedAt || 0) ? a : b);
+      setSyncBadge("☁️ Enviando alterações offline...");
+      const ok = await mcSaveDoc(AppState.user.uid, AppState.user.idToken, latest.data, { fromQueue: true });
+      return ok;
     }
 
     async function mcLoadDoc(uid, idToken) {
@@ -2463,21 +2527,20 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
 
     function triggerAutoSave() {
       AppState.data.updatedAt = Date.now();
-      localStorage.setItem('royalLocalData', JSON.stringify(AppState.data));
-      
+      localStorage.setItem(LOCAL_DATA_KEY, JSON.stringify(AppState.data));
+
       if (AppState.saveQueueTimeout) clearTimeout(AppState.saveQueueTimeout);
-      const queueEl = document.getElementById('diagQueueCount');
-      if (queueEl) queueEl.textContent = "1 pendente";
+      queueOfflineSnapshot(AppState.data);
 
       AppState.saveQueueTimeout = setTimeout(async () => {
-        if (!AppState.isLocal && AppState.user) {
-          await mcSaveDoc(AppState.user.uid, AppState.user.idToken, AppState.data);
-          if (queueEl) queueEl.textContent = "0";
-        } else {
+        if (!AppState.isLocal && AppState.user && navigator.onLine) {
+          await syncPendingCloud();
+        } else if (AppState.isLocal) {
           setSyncBadge("📱 Salvo no aparelho");
-          if (queueEl) queueEl.textContent = "0 (local)";
+        } else {
+          setSyncBadge("📴 Offline — salvo no aparelho");
         }
-      }, 1200);
+      }, 700);
     }
 
     /* ===== ? EXPLANATION DIALOGS ===== */
@@ -3988,7 +4051,8 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
             email: res.email,
             idToken: res.idToken,
             refreshToken: res.refreshToken,
-            nome: nome || email.split('@')[0]
+            nome: nome || email.split('@')[0],
+            tokenExpiresAt: Date.now() + (Number(res.expiresIn || 3600) * 1000)
           };
           AppState.isLocal = false;
           persistUserSession(AppState.user);
@@ -4003,7 +4067,8 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
             email: res.email,
             idToken: res.idToken,
             refreshToken: res.refreshToken,
-            nome: res.displayName || email.split('@')[0]
+            nome: res.displayName || email.split('@')[0],
+            tokenExpiresAt: Date.now() + (Number(res.expiresIn || 3600) * 1000)
           };
           AppState.isLocal = false;
           persistUserSession(AppState.user);
@@ -4461,34 +4526,116 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
         }
       });
 
-      // 4. Session restoration
+      // 4. Session restoration — permite abrir a conta com dados locais mesmo sem internet.
       const sessionRaw = localStorage.getItem('royalToken');
       if (sessionRaw) {
         try {
           const sess = JSON.parse(sessionRaw);
           logEvent("Restaurando sessão anterior...");
-          // Refresh + Lookup
-          const refreshed = await mcRefresh(sess.refreshToken);
-          const lookupUser = await mcLookup(refreshed.idToken);
 
-          AppState.user = {
-            uid: lookupUser.localId,
-            email: lookupUser.email,
-            idToken: refreshed.idToken,
-            refreshToken: refreshed.refreshToken,
-            nome: lookupUser.displayName || sess.nome || lookupUser.email.split('@')[0]
-          };
-          AppState.isLocal = false;
-          persistUserSession(AppState.user);
-          await syncCloudOnLogin();
-          enterApp();
+          if (!navigator.onLine) {
+            // Modo offline autenticado: usamos a identidade e os dados já cacheados.
+            AppState.user = sess;
+            AppState.isLocal = false;
+            const raw = localStorage.getItem(LOCAL_DATA_KEY);
+            if (raw) {
+              try { AppState.data = normalizeDataStructure(JSON.parse(raw), "v2 estruturado (offline)"); } catch (_) {}
+            }
+            setSyncBadge("📴 Offline — dados locais");
+            enterApp();
+            logEvent("Aplicativo aberto offline com sessão em cache.");
+          } else {
+            // Online: valida/renova a sessão normalmente e sincroniza.
+            const refreshed = await mcRefresh(sess.refreshToken);
+            const lookupUser = await mcLookup(refreshed.idToken);
+            AppState.user = {
+              uid: lookupUser.localId,
+              email: lookupUser.email,
+              idToken: refreshed.idToken,
+              refreshToken: refreshed.refreshToken,
+              nome: lookupUser.displayName || sess.nome || lookupUser.email.split('@')[0],
+              tokenExpiresAt: Date.now() + (Number(refreshed.expiresIn || 3600) * 1000)
+            };
+            AppState.isLocal = false;
+            persistUserSession(AppState.user);
+            await syncCloudOnLogin();
+            await syncPendingCloud();
+            enterApp();
+          }
         } catch (err) {
-          logEvent("Sessão inválida: " + err.message);
-          setAuthError("Sessão inválida detectada — entre novamente.");
-          document.getElementById('loginOverlay').style.display = 'flex';
+          if (!navigator.onLine) {
+            // Mesmo com token antigo, os dados locais continuam disponíveis offline.
+            try {
+              const sess = JSON.parse(sessionRaw);
+              AppState.user = sess;
+              AppState.isLocal = false;
+              const raw = localStorage.getItem(LOCAL_DATA_KEY);
+              if (raw) AppState.data = normalizeDataStructure(JSON.parse(raw), "v2 estruturado (offline-fallback)");
+              setSyncBadge("📴 Offline — aguardando internet");
+              enterApp();
+              logEvent("Sessão de cache usada para acesso offline.");
+            } catch (_) {
+              document.getElementById('loginOverlay').style.display = 'flex';
+            }
+          } else {
+            logEvent("Sessão inválida: " + err.message);
+            setAuthError("Sessão inválida detectada — entre novamente.");
+            document.getElementById('loginOverlay').style.display = 'flex';
+          }
         }
       } else {
         document.getElementById('loginOverlay').style.display = 'flex';
+      }
+
+      // 5. Conectividade: toda alteração offline é enviada automaticamente quando a rede volta.
+      const updateConnectionUI = () => {
+        const pill = document.getElementById('offlineSyncPill');
+        if (!pill) return;
+        if (navigator.onLine) {
+          pill.textContent = '🌐 Online';
+          pill.style.opacity = '0.55';
+          if (AppState.user && !AppState.isLocal) {
+            setTimeout(() => syncPendingCloud(), 250);
+          }
+        } else {
+          pill.textContent = '📴 Offline — salvo no aparelho';
+          pill.style.opacity = '0.96';
+          if (AppState.user && !AppState.isLocal) setSyncBadge('📴 Offline — salvo no aparelho');
+        }
+      };
+      window.addEventListener('online', async () => {
+        updateConnectionUI();
+        if (AppState.user && !AppState.isLocal) {
+          // Dá um pequeno tempo para a conexão estabilizar antes do primeiro envio.
+          setTimeout(async () => {
+            try {
+              if (AppState.user.refreshToken && (!AppState.user.tokenExpiresAt || Date.now() >= AppState.user.tokenExpiresAt - 60000)) {
+                const refreshed = await mcRefresh(AppState.user.refreshToken);
+                AppState.user.idToken = refreshed.idToken;
+                AppState.user.refreshToken = refreshed.refreshToken;
+                AppState.user.tokenExpiresAt = Date.now() + (Number(refreshed.expiresIn || 3600) * 1000);
+                persistUserSession(AppState.user);
+              }
+              await syncPendingCloud();
+              await syncCloudOnLogin();
+              renderAll();
+            } catch (e) {
+              setSyncBadge('⚠️ Sincronização pendente');
+              logEvent('Internet voltou, mas a sincronização ainda não foi concluída: ' + e.message);
+            }
+          }, 800);
+        }
+      });
+      window.addEventListener('offline', updateConnectionUI);
+      updateConnectionUI();
+
+      // Service Worker: permite abrir a interface cacheada sem internet quando hospedado em HTTPS.
+      if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+        navigator.serviceWorker.register('./sw.js').then(() => {
+          logEvent('Service Worker offline registrado.');
+        }).catch((e) => {
+          logEvent('Service Worker não registrado: ' + e.message);
+        });
       }
     });
   </script>
@@ -4639,5 +4786,6 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
 })();
 
 </script>
+<div id="offlineSyncPill" aria-live="polite">☁️ Online</div>
 </body>
 </html>
