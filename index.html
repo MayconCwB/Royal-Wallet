@@ -2404,8 +2404,20 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
 
         if (res.status === 200) {
           // Remove somente o snapshot desta conta que já foi confirmado.
-          const queue = readOfflineQueue().filter(q => !(q.uid === uid && Number(q.data?.updatedAt || 0) <= Number(dataObj.updatedAt || 0)));
+          const confirmedAt = Number(dataObj.updatedAt || 0);
+          const queue = readOfflineQueue().filter(q => !(q.uid === uid && Number(q.data?.updatedAt || 0) <= confirmedAt));
           writeOfflineQueue(queue);
+
+          // Guarda uma confirmação explícita da versão que chegou ao Firestore.
+          // Isso evita que o próprio dado recém-sincronizado seja tratado como
+          // "conflito" no próximo login.
+          try {
+            localStorage.setItem(`royalCloudAck_${uid}`, String(confirmedAt));
+          } catch (_) {}
+
+          // Mantém o snapshot confirmado também como fonte local.
+          // Não alteramos a estrutura dos dados nem as outras rotinas do app.
+          localStorage.setItem(LOCAL_DATA_KEY, JSON.stringify(dataObj));
           setSyncBadge("☁️ Sincronizado");
           const lastSyncEl = document.getElementById('diagLastSync');
           if (lastSyncEl) lastSyncEl.textContent = new Date().toLocaleTimeString('pt-BR');
@@ -4088,10 +4100,21 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
 
     async function syncCloudOnLogin() {
       setSyncBadge("☁️ Buscando dados...");
+
+      // Antes de comparar versões, tenta enviar qualquer alteração offline
+      // ainda pendente. Assim, uma alteração feita sem internet não vira um
+      // falso conflito simplesmente porque o usuário fechou e abriu o app.
+      try {
+        await syncPendingCloud();
+      } catch (err) {
+        logEvent("Não foi possível concluir a sincronização pendente antes do login: " + err.message);
+      }
+
       const cloudData = await mcLoadDoc(AppState.user.uid, AppState.user.idToken);
       const localDataRaw = localStorage.getItem('royalLocalData');
       const localData = localDataRaw ? JSON.parse(localDataRaw) : null;
       const royalApagadoEm = Number(localStorage.getItem('royalApagadoEm')) || 0;
+      const cloudAck = Number(localStorage.getItem(`royalCloudAck_${AppState.user.uid}`)) || 0;
 
       if (!cloudData) {
         // Cloud is empty -> migrate local if exists and not cleared
@@ -4130,37 +4153,83 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
         return;
       }
 
-      // Compare cloud and local
-      if (localData && (localData.updatedAt || 0) > (cloudData.updatedAt || 0)) {
-        // Conflict modal
-        openModal("Conflito de Versões", `
-          <p>Encontramos dados no seu aparelho mais recentes do que os dados salvos na nuvem.</p>
-          <p>O que você prefere utilizar?</p>
-        `, [
-          {
-            label: "☁️ Usar da nuvem",
-            onClick: () => {
-              AppState.data = cloudData;
-              localStorage.setItem('royalLocalData', JSON.stringify(AppState.data));
-              renderAll();
-              closeModal();
-            }
-          },
-          {
-            label: "📱 Usar deste aparelho",
-            primary: true,
-            onClick: async () => {
-              AppState.data = localData;
-              await mcSaveDoc(AppState.user.uid, AppState.user.idToken, AppState.data);
-              renderAll();
-              closeModal();
-            }
-          }
-        ]);
-      } else {
-        AppState.data = cloudData;
-        localStorage.setItem('royalLocalData', JSON.stringify(AppState.data));
+      // Compare cloud and local.
+      const localUpdatedAt = Number(localData?.updatedAt || 0);
+      const cloudUpdatedAt = Number(cloudData?.updatedAt || 0);
+
+      // Se esta versão local já foi confirmada pelo Firestore, não há conflito.
+      // Isso cobre especialmente o fluxo: offline -> salvar -> internet volta ->
+      // sincroniza -> fecha o app -> abre novamente.
+      const localAlreadyConfirmed = localData && cloudAck > 0 && localUpdatedAt <= cloudAck;
+      const sameVersion = localData && cloudData && localUpdatedAt === cloudUpdatedAt;
+
+      if (localAlreadyConfirmed || sameVersion) {
+        AppState.data = cloudData || localData;
+        localStorage.setItem(LOCAL_DATA_KEY, JSON.stringify(AppState.data));
+        if (cloudData) {
+          try {
+            localStorage.setItem(`royalCloudAck_${AppState.user.uid}`, String(cloudUpdatedAt));
+          } catch (_) {}
+        }
+        logEvent("Versão local e nuvem confirmadas; nenhum conflito necessário.");
+        return;
       }
+
+      if (localData && localUpdatedAt > cloudUpdatedAt) {
+        // Conflito real: a versão local é mais nova e não foi confirmada pela nuvem.
+        // O login aguarda a escolha do usuário antes de executar enterApp().
+        return await new Promise((resolve) => {
+          let resolved = false;
+          const finish = (value) => {
+            if (resolved) return;
+            resolved = true;
+            resolve(value);
+          };
+
+          openModal("Conflito de Versões", `
+            <p>Encontramos dados no seu aparelho mais recentes do que os dados salvos na nuvem.</p>
+            <p>O que você prefere utilizar?</p>
+          `, [
+            {
+              label: "☁️ Usar da nuvem",
+              onClick: () => {
+                AppState.data = normalizeDataStructure(cloudData, "v2 estruturado (escolha da nuvem)");
+                localStorage.setItem(LOCAL_DATA_KEY, JSON.stringify(AppState.data));
+                try {
+                  localStorage.setItem(`royalCloudAck_${AppState.user.uid}`, String(Number(AppState.data.updatedAt || cloudUpdatedAt || Date.now())));
+                } catch (_) {}
+                setSyncBadge("☁️ Sincronizado");
+                closeModal();
+                renderAll();
+                finish(true);
+              }
+            },
+            {
+              label: "📱 Usar deste aparelho",
+              primary: true,
+              onClick: async () => {
+                AppState.data = normalizeDataStructure(localData, "v2 estruturado (escolha do aparelho)");
+                const ok = await mcSaveDoc(AppState.user.uid, AppState.user.idToken, AppState.data);
+                if (ok) {
+                  closeModal();
+                  renderAll();
+                  finish(true);
+                } else {
+                  showToast("Não foi possível confirmar a versão local na nuvem.");
+                  finish(false);
+                }
+              }
+            }
+          ]);
+        });
+      }
+
+      // Quando a nuvem é igual ou mais nova, ela passa a ser a fonte oficial.
+      AppState.data = cloudData;
+      localStorage.setItem(LOCAL_DATA_KEY, JSON.stringify(AppState.data));
+      try {
+        localStorage.setItem(`royalCloudAck_${AppState.user.uid}`, String(cloudUpdatedAt));
+      } catch (_) {}
     }
 
     function enterApp() {
