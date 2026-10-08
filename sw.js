@@ -1,9 +1,9 @@
-const CACHE_NAME = 'royal-wallet-shell-v1';
+const CACHE_NAME = 'royal-wallet-shell-v4';
 const APP_URL = './index.html';
 
 self.addEventListener('install', event => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then(cache => cache.addAll([APP_URL, './']))
+    caches.open(CACHE_NAME).then(cache => cache.addAll([APP_URL, './', './royal-wallet-features.js']))
       .then(() => self.skipWaiting())
   );
 });
@@ -11,7 +11,7 @@ self.addEventListener('install', event => {
 self.addEventListener('activate', event => {
   event.waitUntil(
     caches.keys().then(keys => Promise.all(
-      keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))
+      keys.filter(k => k.startsWith('royal-wallet-shell-') && k !== CACHE_NAME).map(k => caches.delete(k))
     )).then(() => self.clients.claim())
   );
 });
@@ -27,8 +27,10 @@ self.addEventListener('fetch', event => {
   if (req.mode === 'navigate') {
     event.respondWith(
       fetch(req).then(resp => {
-        const copy = resp.clone();
-        caches.open(CACHE_NAME).then(cache => cache.put(APP_URL, copy));
+        if (resp.ok) {
+          const copy = resp.clone();
+          event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.put(APP_URL, copy)));
+        }
         return resp;
       }).catch(() => caches.match(APP_URL))
     );
@@ -41,7 +43,7 @@ self.addEventListener('fetch', event => {
       const network = fetch(req).then(resp => {
         if (resp.ok && new URL(req.url).origin === self.location.origin) {
           const copy = resp.clone();
-          caches.open(CACHE_NAME).then(cache => cache.put(req, copy));
+          event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.put(req, copy)));
         }
         return resp;
       }).catch(() => cached);
