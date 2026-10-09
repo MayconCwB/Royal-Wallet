@@ -1,4 +1,4 @@
-const CACHE_NAME = 'royal-wallet-shell-v4';
+const CACHE_NAME = 'royal-wallet-shell-v5';
 const APP_URL = './index.html';
 
 self.addEventListener('install', event => {
@@ -23,17 +23,28 @@ self.addEventListener('fetch', event => {
   // Firebase/API requests devem ir sempre para a rede.
   if (req.url.includes('googleapis.com') || req.url.includes('firestore.googleapis.com')) return;
 
-  // Navegação: tenta a rede e cai para o HTML em cache.
+  // Uma rede conectada sem internet não pode bloquear a abertura da cópia local.
   if (req.mode === 'navigate') {
-    event.respondWith(
-      fetch(req).then(resp => {
+    const network = fetch(req).then(async resp => {
         if (resp.ok) {
           const copy = resp.clone();
-          event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.put(APP_URL, copy)));
+          await caches.open(CACHE_NAME).then(cache => cache.put(APP_URL, copy));
+          return resp;
         }
-        return resp;
-      }).catch(() => caches.match(APP_URL))
-    );
+        return (await caches.match(APP_URL)) || resp;
+      }).catch(() => caches.match(APP_URL));
+    event.waitUntil(network.then(() => {}));
+    event.respondWith((async () => {
+      let timer;
+      try {
+        const early = await Promise.race([
+          network,
+          new Promise(resolve => { timer = setTimeout(() => resolve(null), 2000); })
+        ]);
+        return early || (await caches.match(APP_URL)) || (await network) ||
+          new Response('Abra o Royal Wallet uma vez com internet para preparar o acesso offline.', { status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+      } finally { clearTimeout(timer); }
+    })());
     return;
   }
 

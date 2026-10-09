@@ -11,7 +11,7 @@ function setup() {
   const storage = new Map();
   const elements = new Map();
   const context = vm.createContext({
-    console, navigator: { onLine: true }, setTimeout, clearTimeout,
+    console, navigator: { onLine: true }, setTimeout, clearTimeout, AbortController,
     window: {}, document: {
       addEventListener() {},
       getElementById(id) {
@@ -41,7 +41,7 @@ function setup() {
     globalThis.api = { AppState, emptyWallet, localDataKey, readLocalWallet, migrateLegacyStorage,
       queueOfflineSnapshot, readOfflineQueue, mcSaveDoc, mcLoadDoc, mcDeleteAccount,
       syncCloudOnLogin, syncPendingCloud, triggerAutoSave, logout, closeModal,
-      parseCsvDate, csvToRows, prepareCsvImport, normalizeDataStructure, toFsValue,
+      parseCsvDate, csvToRows, prepareCsvImport, normalizeDataStructure, toFsValue, fbFetch,
       startRealtimeSync, stopRealtimeSync, processRealtimeChange, enterApp };
   `, context);
   const api = context.api;
@@ -361,10 +361,10 @@ test('Service Worker remove apenas caches próprios e preserva HTML em caso de e
   const removed = [];
   let stored = 0;
   const context = vm.createContext({
-    URL,
+    URL, setTimeout, clearTimeout, Response,
     self: { addEventListener: (name, handler) => { handlers[name] = handler; },
       clients: { claim: async () => {} }, location: { origin: 'https://wallet.example' } },
-      caches: { keys: async () => ['royal-wallet-shell-v1', 'royal-wallet-shell-v4', 'other-app'],
+      caches: { keys: async () => ['royal-wallet-shell-v1', 'royal-wallet-shell-v5', 'other-app'], match: async () => undefined,
       delete: async key => removed.push(key), open: async () => ({ put: async () => stored++ }) },
     fetch: async () => ({ ok: false, status: 503 })
   });
@@ -378,6 +378,31 @@ test('Service Worker remove apenas caches próprios e preserva HTML em caso de e
     respondWith: task => { response = task; }, waitUntil() {} });
   assert.equal((await response).status, 503);
   assert.equal(stored, 0);
+});
+
+test('Abertura offline usa HTML local quando a rede falha, trava ou retorna erro', async () => {
+  for (const mode of ['rejected', 'hung', 'http-error']) {
+    const handlers = {}; const cached = { ok: true, marker: 'cached-app' }; const background = [];
+    const context = vm.createContext({ URL, Response,
+      setTimeout: callback => setTimeout(callback, 0), clearTimeout,
+      self: { addEventListener: (name, callback) => { handlers[name] = callback; }, location: { origin: 'https://wallet.example' } },
+      caches: { match: async () => cached, open: async () => ({ put: async () => { throw Error('Não guardar resposta de erro'); } }) },
+      fetch: () => mode === 'hung' ? new Promise(() => {}) : mode === 'rejected' ? Promise.reject(new Error('offline')) : Promise.resolve({ ok: false, status: 503 })
+    });
+    vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'sw.js'), 'utf8'), context);
+    let response;
+    handlers.fetch({ request: { method: 'GET', mode: 'navigate', url: 'https://wallet.example/index.html' },
+      respondWith: task => { response = task; }, waitUntil: task => background.push(task) });
+    assert.equal((await response).marker, 'cached-app', mode);
+    if (mode !== 'hung') await Promise.all(background);
+  }
+});
+test('Falha de rede é distinguida de rejeição HTTP mesmo com indicador online', async () => {
+  const { api, context } = setup();
+  vm.runInContext('fetch = async () => { throw new TypeError("Failed to fetch"); };', context);
+  await assert.rejects(api.fbFetch('https://wallet.example'), error => error.code === 'NETWORK_UNAVAILABLE');
+  context.fetch = async () => ({ ok: false, status: 401, json: async () => ({ error: 'expired' }) });
+  assert.equal((await api.fbFetch('https://wallet.example')).status, 401);
 });
 
 test('Listener aplica atualização remota enquanto a carteira está aberta', async () => {

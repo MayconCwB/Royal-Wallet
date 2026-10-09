@@ -2174,7 +2174,9 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
             name: "Royal Wallet",
             short_name: "Royal",
             description: "Controle financeiro pessoal e familiar",
-            start_url: "./index.html",
+            id: new URL('./index.html', location.href).href,
+            start_url: new URL('./index.html', location.href).href,
+            scope: new URL('./', location.href).href,
             display: "standalone",
             theme_color: "#8b1e1e",
             background_color: "#14100f",
@@ -2220,9 +2222,16 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
 
     /* ===== FIREBASE REST CLIENT ===== */
     async function fbFetch(url, options = {}) {
-      const resp = await fetch(url, options);
-      const data = await resp.json().catch(() => ({}));
-      return { ok: resp.ok, status: resp.status, data };
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 10000);
+      try {
+        const resp = await fetch(url, { ...options, signal: options.signal || controller.signal });
+        const data = await resp.json().catch(() => ({}));
+        return { ok: resp.ok, status: resp.status, data };
+      } catch (error) {
+        if (error.name === 'AbortError' || error instanceof TypeError) error.code = 'NETWORK_UNAVAILABLE';
+        throw error;
+      } finally { clearTimeout(timer); }
     }
 
     async function mcSignup(email, password, displayName) {
@@ -4702,6 +4711,12 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
 
     /* ===== INITIALIZATION ===== */
     document.addEventListener('DOMContentLoaded', async () => {
+      // Prepara a abertura offline antes de qualquer chamada de autenticação.
+      if ('serviceWorker' in navigator && window.isSecureContext) {
+        navigator.serviceWorker.register('./sw.js').then(() => navigator.serviceWorker.ready).then(() => {
+          logEvent('Aplicativo preparado para abrir offline neste aparelho.');
+        }).catch(e => logEvent('Preparação offline pendente: ' + e.message));
+      }
       migrateLegacyStorage();
       // 1. Brand icons (PNG real exclusivo ou placeholder neutro)
       await setupBrandAssets();
@@ -5096,7 +5111,7 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
             enterApp();
           }
         } catch (err) {
-          if (!navigator.onLine) {
+          if (!navigator.onLine || err.code === 'NETWORK_UNAVAILABLE') {
             // Mesmo com token antigo, os dados locais continuam disponíveis offline.
             try {
               const sess = JSON.parse(sessionRaw);
@@ -5173,14 +5188,6 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
       });
       updateConnectionUI();
 
-      // Service Worker: permite abrir a interface cacheada sem internet quando hospedado em HTTPS.
-      if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
-        navigator.serviceWorker.register('./sw.js').then(() => {
-          logEvent('Service Worker offline registrado.');
-        }).catch((e) => {
-          logEvent('Service Worker não registrado: ' + e.message);
-        });
-      }
     });
   </script>
 <script src="./royal-wallet-features.js"></script>
