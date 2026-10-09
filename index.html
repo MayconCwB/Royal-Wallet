@@ -597,10 +597,15 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
       border-radius: 12px;
       width: 100%;
       max-width: 500px;
+      max-height: calc(100dvh - 2rem);
+      display: flex;
+      flex-direction: column;
       padding: 1.5rem;
       position: relative;
       box-shadow: 0 10px 30px rgba(0,0,0,0.6);
     }
+    #genericModalBody { overflow-y: auto; min-height: 0; }
+    #genericModalDialog > :first-child, #genericModalFooter { flex-shrink: 0; }
 
     /* Event Log Table */
     .event-log-box {
@@ -2169,7 +2174,9 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
             name: "Royal Wallet",
             short_name: "Royal",
             description: "Controle financeiro pessoal e familiar",
-            start_url: "./index.html",
+            id: new URL('./index.html', location.href).href,
+            start_url: new URL('./index.html', location.href).href,
+            scope: new URL('./', location.href).href,
             display: "standalone",
             theme_color: "#8b1e1e",
             background_color: "#14100f",
@@ -2215,9 +2222,16 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
 
     /* ===== FIREBASE REST CLIENT ===== */
     async function fbFetch(url, options = {}) {
-      const resp = await fetch(url, options);
-      const data = await resp.json().catch(() => ({}));
-      return { ok: resp.ok, status: resp.status, data };
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 10000);
+      try {
+        const resp = await fetch(url, { ...options, signal: options.signal || controller.signal });
+        const data = await resp.json().catch(() => ({}));
+        return { ok: resp.ok, status: resp.status, data };
+      } catch (error) {
+        if (error.name === 'AbortError' || error instanceof TypeError) error.code = 'NETWORK_UNAVAILABLE';
+        throw error;
+      } finally { clearTimeout(timer); }
     }
 
     async function mcSignup(email, password, displayName) {
@@ -2313,20 +2327,223 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
       return res.data;
     }
 
-    async function mcDeleteAccount(idToken) {
+    async function mcDeleteAccount(idToken, uid) {
+      if (!uid) throw new Error('Conta não identificada.');
+      // Valida a sessão antes de apagar a carteira.
+      const identity = await mcLookup(idToken);
+      if (identity.localId !== uid) throw new Error('A sessão não corresponde à conta.');
+      const removed = await fbFetch(`${FS_URL}/${uid}`, {
+        method: 'DELETE', headers: { 'Authorization': `Bearer ${idToken}` }
+      });
+      if (!removed.ok && removed.status !== 404) throw new Error('Não foi possível excluir os dados da nuvem. A conta foi mantida.');
+      localStorage.setItem(`royalDeletionPending_${uid}`, '1');
       const url = `${AUTH_URL}delete?key=${FB_API_KEY}`;
       const res = await fbFetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ idToken })
       });
-      if (!res.ok) throw new Error("Não foi possível excluir conta no Firebase.");
+      if (!res.ok) throw new Error("A carteira foi excluída da nuvem, mas a conta não foi removida. Entre novamente e repita a exclusão.");
+      localStorage.removeItem(`royalDeletionPending_${uid}`);
       return res.data;
     }
 
     // Firestore Doc Save/Load — com fila offline e sincronização automática.
     const OFFLINE_QUEUE_KEY = 'royalSyncQueueV1';
-    const LOCAL_DATA_KEY = 'royalLocalData';
+    function localDataKey(uid = AppState.isLocal ? null : AppState.user?.uid) {
+      return uid ? `royalLocalData_${uid}` : 'royalLocalData_device';
+    }
+
+    function emptyWallet() {
+      return { movimentos: [], recorrentes: [], parcelas: [], dividas: [], metas: [], historico: [], updatedAt: Date.now() };
+    }
+
+    function readLocalWallet(uid = AppState.isLocal ? null : AppState.user?.uid) {
+      const raw = localStorage.getItem(localDataKey(uid));
+      if (!raw) return null;
+      // Um arquivo corrompido deve ser recuperado pelo usuário, nunca sobrescrito.
+      let parsed = JSON.parse(raw);
+      if (typeof parsed?.dados === 'string') parsed = JSON.parse(parsed.dados);
+      else if (typeof parsed?.payload === 'string') parsed = JSON.parse(parsed.payload);
+      return normalizeDataStructure(parsed, 'dados deste aparelho');
+    }
+
+    function migrateLegacyStorage() {
+      const legacy = localStorage.getItem('royalLocalData');
+      if (!legacy || localStorage.getItem('royalLegacyMigratedV2')) return;
+      let session = null;
+      try { session = JSON.parse(localStorage.getItem('royalToken') || 'null'); } catch (_) {}
+      const key = session?.uid ? localDataKey(session.uid) : localDataKey(null);
+      if (!localStorage.getItem(key)) localStorage.setItem(key, legacy);
+      if (session?.uid) {
+        localStorage.setItem('royalLegacyOwner', session.uid);
+        const erased = localStorage.getItem('royalApagadoEm');
+        if (erased) localStorage.setItem(`royalApagadoEm_${session.uid}`, erased);
+      }
+      // A cópia original é mantida para recuperação manual.
+      localStorage.setItem('royalLegacyMigratedV2', '1');
+    }
+
+    let cloudSyncTask = null;
+    let cancelConflict = null;
+    let deletingAccount = false;
+    const saveTasks = new Map();
+    let realtimeSdkTask = null;
+    let realtimeGeneration = 0;
+    let realtimeUnsubscribe = null;
+    let realtimeTimer = null;
+    let realtimePending = false;
+    let realtimeProcessing = false;
+    let realtimeFallback = false;
+    let realtimeDeferredVersion = null;
+    let realtimeIdentityTask = Promise.resolve();
+
+    async function loadRealtimeSdk() {
+      if (!realtimeSdkTask) {
+        realtimeSdkTask = (async () => {
+          const [appApi, authApi, firestoreApi] = await Promise.all([
+            import('https://www.gstatic.com/firebasejs/12.4.0/firebase-app.js'),
+            import('https://www.gstatic.com/firebasejs/12.4.0/firebase-auth.js'),
+            import('https://www.gstatic.com/firebasejs/12.4.0/firebase-firestore.js')
+          ]);
+          const app = appApi.initializeApp({ apiKey: FB_API_KEY, projectId: FB_PROJECT,
+            authDomain: `${FB_PROJECT}.firebaseapp.com` }, 'royal-wallet-realtime');
+          const auth = authApi.getAuth(app);
+          await auth.authStateReady();
+          return { auth, db: firestoreApi.getFirestore(app), ...authApi, ...firestoreApi };
+        })().catch(err => { realtimeSdkTask = null; throw err; });
+      }
+      return realtimeSdkTask;
+    }
+
+    function stopRealtimeSync() {
+      realtimeGeneration++;
+      if (realtimeUnsubscribe) realtimeUnsubscribe();
+      realtimeUnsubscribe = null;
+      if (realtimeTimer) clearTimeout(realtimeTimer);
+      realtimeTimer = null;
+      realtimePending = false;
+      realtimeFallback = false;
+      realtimeProcessing = false;
+      realtimeDeferredVersion = null;
+      const pill = document.getElementById('offlineSyncPill');
+      if (pill && navigator.onLine) pill.textContent = '🌐 Online';
+    }
+
+    function realtimeAllowed(uid, generation) {
+      return generation === realtimeGeneration && AppState.user?.uid === uid &&
+        !AppState.isLocal && !deletingAccount && navigator.onLine &&
+        !localStorage.getItem(`royalDeletionPending_${uid}`);
+    }
+
+    function scheduleRealtimeCheck(uid, generation, delay = 100) {
+      if (realtimeTimer) clearTimeout(realtimeTimer);
+      realtimeTimer = setTimeout(() => {
+        realtimeTimer = null;
+        processRealtimeChange(uid, generation);
+      }, delay);
+    }
+
+    async function processRealtimeChange(uid, generation) {
+      if (!realtimeAllowed(uid, generation)) return;
+      if (document.visibilityState === 'hidden') return;
+      // Não interrompe o preenchimento de um formulário nem abre outro conflito.
+      if (document.getElementById('genericModalBackdrop')?.classList.contains('active')) {
+        scheduleRealtimeCheck(uid, generation, 1000);
+        return;
+      }
+      if (realtimeProcessing) return;
+      realtimeProcessing = true;
+      try {
+        if (cloudSyncTask) await cloudSyncTask;
+        if (!realtimeAllowed(uid, generation)) return;
+        if (realtimePending) {
+          realtimePending = false;
+          await syncPendingCloud({ background: true });
+        }
+      } finally {
+        if (generation === realtimeGeneration) {
+          realtimeProcessing = false;
+          if (realtimeAllowed(uid, generation) && (realtimePending || realtimeFallback)) {
+            if (realtimeFallback) realtimePending = true;
+            scheduleRealtimeCheck(uid, generation, realtimeFallback ? 15000 : 100);
+          }
+        }
+      }
+    }
+
+    async function startRealtimeSync(credentials = null) {
+      stopRealtimeSync();
+      if (!AppState.user || AppState.isLocal || deletingAccount || !navigator.onLine) return;
+      const uid = AppState.user.uid;
+      const generation = realtimeGeneration;
+      try {
+        const sdk = await loadRealtimeSdk();
+        await realtimeIdentityTask.catch(() => {});
+        if (!realtimeAllowed(uid, generation)) return;
+        if (credentials) {
+          // A senha é usada apenas nesta chamada; não é armazenada pelo aplicativo.
+          const previousIdentityTask = realtimeIdentityTask;
+          realtimeIdentityTask = previousIdentityTask.catch(() => {}).then(async () => {
+            if (realtimeAllowed(uid, generation)) {
+              await sdk.signInWithEmailAndPassword(sdk.auth, credentials.email, credentials.password);
+            }
+          });
+          await realtimeIdentityTask;
+          if (!realtimeAllowed(uid, generation)) return;
+        }
+        if (sdk.auth.currentUser?.uid !== uid) {
+          throw new Error('Entre novamente para ativar a conexão em tempo real nesta sessão.');
+        }
+        let lastSnapshot = null;
+        realtimeUnsubscribe = sdk.onSnapshot(sdk.doc(sdk.db, 'carteiras', uid),
+          { includeMetadataChanges: true }, snapshot => {
+            if (!realtimeAllowed(uid, generation) || snapshot.metadata.fromCache || snapshot.metadata.hasPendingWrites) return;
+            const fingerprint = snapshot.exists() ? JSON.stringify(snapshot.data()) : 'documento-removido';
+            if (fingerprint === lastSnapshot) return;
+            lastSnapshot = fingerprint;
+            realtimePending = true;
+            scheduleRealtimeCheck(uid, generation);
+          }, err => {
+            if (!realtimeAllowed(uid, generation)) return;
+            if (realtimeUnsubscribe) realtimeUnsubscribe();
+            realtimeUnsubscribe = null;
+            if (err.code === 'permission-denied' || err.code === 'unauthenticated') {
+              setSyncBadge('⚠️ Conexão em tempo real sem acesso — entre novamente');
+              const pill = document.getElementById('offlineSyncPill');
+              if (pill) pill.textContent = '🌐 Online • atualização pausada';
+              logEvent('Listener sem acesso: ' + err.message);
+              return;
+            }
+            enableRealtimeFallback(uid, generation, err.message);
+          });
+        logEvent('Atualizações em tempo real ativadas para esta conta.');
+        const pill = document.getElementById('offlineSyncPill');
+        if (pill) pill.textContent = '🌐 Online • tempo real';
+      } catch (err) {
+        if (realtimeAllowed(uid, generation)) enableRealtimeFallback(uid, generation, err.message);
+      }
+    }
+
+    function enableRealtimeFallback(uid, generation, reason) {
+      realtimeFallback = true;
+      realtimePending = true;
+      const pill = document.getElementById('offlineSyncPill');
+      if (pill) pill.textContent = '🌐 Online • atualização a cada 15 s';
+      logEvent('Atualização automática a cada 15 segundos: ' + reason);
+      scheduleRealtimeCheck(uid, generation, 15000);
+    }
+
+    async function clearRealtimeIdentity() {
+      // Não inicializa o SDK só para sair de uma sessão antiga ou local.
+      if (!realtimeSdkTask) return;
+      const sdkTask = realtimeSdkTask;
+      const previousIdentityTask = realtimeIdentityTask;
+      realtimeIdentityTask = previousIdentityTask.catch(() => {}).then(async () => {
+        try { const sdk = await sdkTask; await sdk.signOut(sdk.auth); } catch (_) {}
+      });
+      await realtimeIdentityTask;
+    }
 
     function readOfflineQueue() {
       try { return JSON.parse(localStorage.getItem(OFFLINE_QUEUE_KEY) || '[]'); } catch { return []; }
@@ -2342,25 +2559,45 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
       const queue = readOfflineQueue();
       // Mantemos somente o snapshot mais recente: o estado completo já contém todas as alterações.
       const item = {
-        uid: AppState.user?.uid || null,
-        data: dataObj,
+        uid: AppState.isLocal ? null : AppState.user?.uid || null,
+        data: JSON.parse(JSON.stringify(dataObj)),
         queuedAt: Date.now()
       };
       if (!item.uid) return;
+      if (queue.some(q => q.uid === item.uid && Number(q.data?.updatedAt || 0) > Number(dataObj.updatedAt || 0))) return;
       const filtered = queue.filter(q => q.uid && item.uid && q.uid !== item.uid);
       filtered.push(item);
       writeOfflineQueue(filtered);
     }
 
     async function mcSaveDoc(uid, idToken, dataObj, options = {}) {
-      if (!uid || AppState.isLocal) {
-        localStorage.setItem(LOCAL_DATA_KEY, JSON.stringify(dataObj));
+      const snapshot = JSON.parse(JSON.stringify(dataObj));
+      const previous = saveTasks.get(uid) || Promise.resolve();
+      const task = previous.catch(() => {}).then(() => saveCloudSnapshot(uid, idToken, snapshot, options));
+      saveTasks.set(uid, task);
+      try { return await task; }
+      finally { if (saveTasks.get(uid) === task) saveTasks.delete(uid); }
+    }
+
+    async function saveCloudSnapshot(uid, idToken, dataObj, options = {}) {
+      if (!uid) {
+        const current = localStorage.getItem(localDataKey(uid));
+        if (!current || Number(JSON.parse(current).updatedAt || 0) <= Number(dataObj.updatedAt || 0)) {
+          localStorage.setItem(localDataKey(uid), JSON.stringify(dataObj));
+        }
         setSyncBadge("📱 Salvo no aparelho");
         return true;
       }
 
       // Sempre salva primeiro localmente. Se a rede falhar, a fila garante o envio posterior.
-      localStorage.setItem(LOCAL_DATA_KEY, JSON.stringify(dataObj));
+      const current = localStorage.getItem(localDataKey(uid));
+      if (!current || Number(JSON.parse(current).updatedAt || 0) <= Number(dataObj.updatedAt || 0)) {
+        localStorage.setItem(localDataKey(uid), JSON.stringify(dataObj));
+      }
+      if (localStorage.getItem(`royalDeletionPending_${uid}`)) {
+        setSyncBadge('⚠️ Exclusão incompleta — repita a exclusão da conta');
+        return false;
+      }
 
       if (!navigator.onLine) {
         queueOfflineSnapshot(dataObj);
@@ -2370,10 +2607,10 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
       }
 
       setSyncBadge("☁️ Sincronizando...");
-      const url = `${FS_URL}/${uid}`;
+      let url = `${FS_URL}/${uid}`;
       const firestoreBody = {
         fields: {
-          nome: { stringValue: AppState.user?.nome || '' },
+          nome: { stringValue: AppState.user?.uid === uid ? AppState.user.nome || '' : dataObj.nome || '' },
           atualizadoEm: { integerValue: String(dataObj.updatedAt || Date.now()) },
           v: { stringValue: "2" },
           movimentos: toFsValue(dataObj.movimentos || []),
@@ -2381,20 +2618,36 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
           parcelas: toFsValue(dataObj.parcelas || []),
           dividas: toFsValue(dataObj.dividas || []),
           metas: toFsValue(dataObj.metas || []),
-          historico: toFsValue(dataObj.historico || [])
+          historico: toFsValue(dataObj.historico || []),
+          contas: toFsValue(dataObj.contas || []),
+          cartoes: toFsValue(dataObj.cartoes || []),
+          lixeira: toFsValue(dataObj.lixeira || [])
         }
       };
 
       try {
+        const cloud = Object.hasOwn(options, 'cloud') ? options.cloud : await mcLoadDoc(uid, idToken);
+        const ack = Number(localStorage.getItem(`royalCloudAck_${uid}`) || 0);
+        const version = localStorage.getItem(`royalCloudVersion_${uid}`);
+        const unchanged = cloud && (version ? version === cloud._cloudUpdateTime : ack > 0 && ack === cloud.updatedAt);
+        if (cloud && !options.force && !unchanged) {
+          if (AppState.user?.uid === uid) queueOfflineSnapshot(dataObj);
+          setSyncBadge('⚠️ Conflito — sincronize para escolher a versão');
+          return false;
+        }
+        if (cloud && !cloud._cloudUpdateTime) throw new Error('A versão da nuvem não pôde ser verificada.');
+        url += cloud ? `?currentDocument.updateTime=${encodeURIComponent(cloud._cloudUpdateTime)}` : '?currentDocument.exists=false';
+        if (deletingAccount && !options.diagnostic) return false;
         let res = await fbFetch(url, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${idToken}` },
           body: JSON.stringify(firestoreBody)
         });
 
-        if (res.status === 401 && AppState.user?.refreshToken && navigator.onLine) {
+        if (res.status === 401 && AppState.user?.uid === uid && AppState.user?.refreshToken && navigator.onLine) {
           logEvent("Token expirado, renovando sessão...");
           const refreshed = await mcRefresh(AppState.user.refreshToken);
+          if (AppState.user?.uid !== uid || deletingAccount) return false;
           AppState.user.idToken = refreshed.idToken;
           AppState.user.refreshToken = refreshed.refreshToken;
           AppState.user.tokenExpiresAt = Date.now() + (Number(refreshed.expiresIn || 3600) * 1000);
@@ -2417,46 +2670,51 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
           // "conflito" no próximo login.
           try {
             localStorage.setItem(`royalCloudAck_${uid}`, String(confirmedAt));
+            if (res.data.updateTime) localStorage.setItem(`royalCloudVersion_${uid}`, res.data.updateTime);
           } catch (_) {}
 
-          // Mantém o snapshot confirmado também como fonte local.
-          // Não alteramos a estrutura dos dados nem as outras rotinas do app.
-          localStorage.setItem(LOCAL_DATA_KEY, JSON.stringify(dataObj));
-          setSyncBadge("☁️ Sincronizado");
+          // Uma resposta antiga não substitui alterações feitas durante o envio.
+          const current = localStorage.getItem(localDataKey(uid));
+          if (!current || Number(JSON.parse(current).updatedAt || 0) <= Number(dataObj.updatedAt || 0)) {
+            localStorage.setItem(localDataKey(uid), JSON.stringify(dataObj));
+          }
+          if (AppState.user?.uid === uid) {
+            const pending = readOfflineQueue().some(q => q.uid === uid);
+            setSyncBadge(pending ? '⚠️ Alterações pendentes' : '☁️ Sincronizado');
+          }
           const lastSyncEl = document.getElementById('diagLastSync');
           if (lastSyncEl) lastSyncEl.textContent = new Date().toLocaleTimeString('pt-BR');
           logEvent("Sincronização com a nuvem confirmada.");
           return true;
         }
 
-        if (res.status === 401 || res.status === 403 || res.status >= 500) {
+        if (AppState.user?.uid === uid) {
           queueOfflineSnapshot(dataObj);
         }
         setSyncBadge("⚠️ Aguardando sincronização");
         logEvent(`Nuvem indisponível: HTTP ${res.status}. Dados preservados no aparelho.`);
         return false;
       } catch (err) {
-        queueOfflineSnapshot(dataObj);
+        if (AppState.user?.uid === uid) queueOfflineSnapshot(dataObj);
         setSyncBadge("📴 Sem conexão — aguardando sincronização");
         logEvent("Falha de rede: dados preservados no aparelho e na fila offline.");
         return false;
       }
     }
 
-    async function syncPendingCloud() {
-      if (AppState.isLocal || !AppState.user || !navigator.onLine) return false;
-      const queue = readOfflineQueue().filter(q => q.uid === AppState.user.uid);
-      if (!queue.length) return false;
-
-      const latest = queue.reduce((a, b) => Number(a.data?.updatedAt || 0) >= Number(b.data?.updatedAt || 0) ? a : b);
-      setSyncBadge("☁️ Enviando alterações offline...");
-      const ok = await mcSaveDoc(AppState.user.uid, AppState.user.idToken, latest.data, { fromQueue: true });
-      return ok;
+    async function syncPendingCloud(options = {}) {
+      if (deletingAccount || AppState.isLocal || !AppState.user || !navigator.onLine) return false;
+      try { return await syncCloudOnLogin(options); }
+      catch (err) {
+        setSyncBadge('⚠️ Sincronização pendente');
+        logEvent('Sincronização preservada para tentar novamente: ' + err.message);
+        return false;
+      }
     }
 
     async function mcLoadDoc(uid, idToken) {
-      if (!uid || AppState.isLocal) {
-        const raw = localStorage.getItem('royalLocalData');
+      if (!uid) {
+        const raw = localStorage.getItem(localDataKey());
         if (!raw) return null;
         try {
           const parsed = JSON.parse(raw);
@@ -2477,8 +2735,9 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
         headers: { 'Authorization': `Bearer ${idToken}` }
       });
 
-      if (res.status === 401 && AppState.user?.refreshToken) {
+      if (res.status === 401 && AppState.user?.uid === uid && AppState.user?.refreshToken) {
         const refreshed = await mcRefresh(AppState.user.refreshToken);
+        if (AppState.user?.uid !== uid) throw new Error('A conta ativa mudou durante a leitura.');
         AppState.user.idToken = refreshed.idToken;
         AppState.user.refreshToken = refreshed.refreshToken;
         persistUserSession(AppState.user);
@@ -2506,11 +2765,14 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
             dividas: f.dividas ? fromFsValue(f.dividas) || [] : [],
             metas: f.metas ? fromFsValue(f.metas) || [] : [],
             historico: f.historico ? fromFsValue(f.historico) || [] : [],
+            contas: f.contas ? fromFsValue(f.contas) || [] : [],
+            cartoes: f.cartoes ? fromFsValue(f.cartoes) || [] : [],
+            lixeira: f.lixeira ? fromFsValue(f.lixeira) || [] : [],
             updatedAt: Number(tsVal) || Date.now(),
             v: "2",
             nome: f.nome ? fromFsValue(f.nome) : (AppState.user?.nome || '')
           };
-          return normalizeDataStructure(rawV2, "v2 estruturado");
+          return { ...normalizeDataStructure(rawV2, 'v2 estruturado'), _cloudUpdateTime: res.data.updateTime };
         }
 
         // PRIORIDADE 2: Compatibilidade com formato antigo (v1) onde vinha string em "dados" ou "payload"
@@ -2518,14 +2780,13 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
         if (oldString) {
           try {
             const parsed = JSON.parse(oldString);
-            return normalizeDataStructure(parsed, "v1 string");
+            return { ...normalizeDataStructure(parsed, 'v1 string'), _cloudUpdateTime: res.data.updateTime };
           } catch (err) {
-            logEvent("Falha ao analisar JSON do formato antigo: " + err.message);
-            return null;
+            throw new Error("Os dados da nuvem estão inválidos; nenhuma gravação foi realizada.");
           }
         }
       }
-      return null;
+      throw new Error(`Não foi possível ler a carteira da nuvem (HTTP ${res.status}). Nenhum dado foi substituído.`);
     }
 
     function setSyncBadge(txt) {
@@ -2542,8 +2803,8 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
     }
 
     function triggerAutoSave() {
-      AppState.data.updatedAt = Date.now();
-      localStorage.setItem(LOCAL_DATA_KEY, JSON.stringify(AppState.data));
+      AppState.data.updatedAt = Math.max(Date.now(), Number(AppState.data.updatedAt || 0) + 1);
+      localStorage.setItem(localDataKey(), JSON.stringify(AppState.data));
 
       if (AppState.saveQueueTimeout) clearTimeout(AppState.saveQueueTimeout);
       queueOfflineSnapshot(AppState.data);
@@ -2608,6 +2869,7 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
     }
 
     function closeModal() {
+      if (cancelConflict) { cancelConflict(); return; }
       document.getElementById('genericModalBackdrop').classList.remove('active');
     }
 
@@ -2720,7 +2982,7 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
       // Categorias Bar rendering
       const catTotals = {};
       AppState.data.movimentos.forEach(m => {
-        if (m.tipo === 'despesa') {
+        if (m.tipo === 'despesa' && m.classe !== 'pagamento_fatura' && m.data?.startsWith(curMonthStr)) {
           const cat = m.cat || m.categoria || 'Outros';
           catTotals[cat] = (catTotals[cat] || 0) + Number(m.valor || 0);
         }
@@ -2870,12 +3132,24 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
 
     function csvToRows(text) {
       const clean = String(text || '').replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-      const lines = clean.split('\n').filter(line => line.trim() !== '');
-      if (!lines.length) return { headers: [], rows: [] };
-      const delimiter = detectCsvDelimiter(lines[0]);
-      const headers = parseCsvLine(lines[0], delimiter);
-      const rows = lines.slice(1).map(line => parseCsvLine(line, delimiter));
-      return { headers, rows, delimiter };
+      const records = [];
+      let record = '', quoted = false;
+      for (let i = 0; i < clean.length; i++) {
+        const ch = clean[i];
+        if (ch === '"') {
+          record += ch;
+          if (quoted && clean[i + 1] === '"') { record += clean[++i]; continue; }
+          quoted = !quoted;
+        } else if (ch === '\n' && !quoted) {
+          if (record.trim()) records.push(record);
+          record = '';
+        } else record += ch;
+      }
+      if (quoted) throw new Error('O CSV contém aspas sem fechamento.');
+      if (record.trim()) records.push(record);
+      if (!records.length) return { headers: [], rows: [] };
+      const delimiter = detectCsvDelimiter(records[0]);
+      return { headers: parseCsvLine(records[0], delimiter), rows: records.slice(1).map(r => parseCsvLine(r, delimiter)), delimiter };
     }
 
     function csvFindColumn(headers, aliases) {
@@ -2907,16 +3181,18 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
 
     function parseCsvDate(value) {
       const s = String(value || '').trim();
-      if (!s) return '';
-      let m = s.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})$/);
+      let y, month, day;
+      let m = s.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2}|\d{4})$/);
       if (m) {
-        let y = Number(m[3]); if (y < 100) y += 2000;
-        return `${y}-${String(Number(m[2])).padStart(2,'0')}-${String(Number(m[1])).padStart(2,'0')}`;
+        y = Number(m[3]); if (y < 100) y += 2000;
+        month = Number(m[2]); day = Number(m[1]);
+      } else {
+        m = s.match(/^(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/);
+        if (!m) return '';
+        y = Number(m[1]); month = Number(m[2]); day = Number(m[3]);
       }
-      m = s.match(/^(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})/);
-      if (m) return `${m[1]}-${String(Number(m[2])).padStart(2,'0')}-${String(Number(m[3])).padStart(2,'0')}`;
-      const d = new Date(s);
-      return Number.isNaN(d.getTime()) ? '' : d.toISOString().slice(0,10);
+      if (y < 1000 || month < 1 || month > 12 || day < 1 || day > new Date(y, month, 0).getDate()) return '';
+      return `${y}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
     }
 
     function autoCategoryCsv(desc, tipo) {
@@ -2936,7 +3212,7 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
       return 'Outros';
     }
 
-    function prepareCsvImport(text) {
+    function prepareCsvImport(text, options = {}) {
       const parsed = csvToRows(text);
       if (!parsed.headers.length) throw new Error('O CSV está vazio.');
       const dateIdx = csvFindColumn(parsed.headers, ['data','date','data transacao','data transação']);
@@ -2947,7 +3223,12 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
       if (dateIdx < 0 || descIdx < 0 || (valueIdx < 0 && creditIdx < 0 && debitIdx < 0)) {
         throw new Error('Não consegui identificar Data, Descrição e Valor. Confira o cabeçalho do CSV.');
       }
-      const existing = new Set(AppState.data.movimentos.map(m => [m.data, (m.desc || m.descricao || '').trim().toLowerCase(), Number(m.valor || 0), m.tipo].join('|')));
+      const existing = new Map();
+      for (const m of AppState.data.movimentos) {
+        const key = [m.data, (m.desc || m.descricao || '').trim().toLowerCase(), Number(m.valor || 0), m.tipo].join('|');
+        existing.set(key, (existing.get(key) || 0) + 1);
+      }
+      const occurrences = new Map();
       const items = [];
       let ignored = 0;
       parsed.rows.forEach(cols => {
@@ -2964,9 +3245,11 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
         const tipo = valor >= 0 ? 'receita' : 'despesa';
         const abs = Math.abs(valor);
         const key = [data, descricao.toLowerCase(), abs, tipo].join('|');
-        if (existing.has(key)) { ignored++; return; }
-        existing.add(key);
-        items.push({ id: uidGen(), tipo, desc: descricao, descricao, valor: abs, data, cat: autoCategoryCsv(descricao, tipo), categoria: autoCategoryCsv(descricao, tipo), origem: 'csv' });
+        const occurrence = (occurrences.get(key) || 0) + 1;
+        occurrences.set(key, occurrence);
+        const possibleDuplicate = occurrence <= (existing.get(key) || 0);
+        if (possibleDuplicate && !options.includeDuplicates) { ignored++; return; }
+        items.push({ id: uidGen(), tipo, desc: descricao, descricao, valor: abs, data, cat: autoCategoryCsv(descricao, tipo), categoria: autoCategoryCsv(descricao, tipo), origem: 'csv', possibleDuplicate });
       });
       return { items, ignored, headers: parsed.headers };
     }
@@ -3014,7 +3297,7 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
     function importCsvFile(file) {
       const reader = new FileReader();
       reader.onload = () => {
-        try { openCsvPreview(prepareCsvImport(reader.result)); }
+        try { openCsvPreview(prepareCsvImport(reader.result, { includeDuplicates: true })); }
         catch (err) { alert('Não foi possível importar o CSV: ' + err.message); }
       };
       reader.onerror = () => alert('Não foi possível ler o arquivo CSV.');
@@ -3088,6 +3371,7 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
             </td>
             <td style="text-align:center; white-space:nowrap;">
               <button class="btn-action-sm" onclick="handleDeleteRecorrente('${r.id}')" title="Excluir">🗑️</button>
+              <button class="btn-action-sm" onclick="handleEditRecorrente('${r.id}')" title="Editar conta fixa" aria-label="Editar conta fixa">✏️</button>
             </td>
           </tr>
         `;
@@ -3127,6 +3411,7 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
             <div style="display:flex; justify-content:space-between; align-items:flex-start;">
               <h4 style="margin:0; font-size:1.15rem; color:var(--gold);">${escapeHtml(p.desc || p.descricao)}</h4>
               <button class="btn-action-sm" onclick="handleDeleteParcela('${p.id}')">🗑️</button>
+              <button class="btn-action-sm" onclick="handleEditParcela('${p.id}')" title="Editar parcela" aria-label="Editar parcela">✏️</button>
             </div>
             
             <div style="margin:0.75rem 0; font-size:0.95rem;">
@@ -3195,6 +3480,7 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
             <div style="display:flex; justify-content:space-between; align-items:flex-start;">
               <h4 style="margin:0; font-size:1.15rem; color:var(--gold);">${escapeHtml(d.desc || d.credor)}</h4>
               <button class="btn-action-sm" onclick="handleDeleteDivida('${d.id}')">🗑️</button>
+              <button class="btn-action-sm" onclick="handleEditDivida('${d.id}')" title="Editar dívida" aria-label="Editar dívida">✏️</button>
             </div>
 
             <div style="margin:0.75rem 0; font-size:0.95rem;">
@@ -3355,6 +3641,13 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
           }
         });
 
+        if (window.WalletFeatures) {
+          window.WalletFeatures.invoices().filter(invoice => invoice.mes === monthStr && invoice.restante > 0).forEach(invoice => {
+            const day = Number(invoice.vencimento.slice(-2));
+            if (!daysMap[day]) daysMap[day] = [];
+            daysMap[day].push({ tipo: 'Fatura', nome: invoice.nome, valor: invoice.restante, pago: false });
+          });
+        }
         const sortedDays = Object.keys(daysMap).map(Number).sort((a,b) => a-b);
         let totalMes = 0;
         sortedDays.forEach(day => daysMap[day].forEach(item => {
@@ -4165,7 +4458,10 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
         parcelas: AppState.data.parcelas || [],
         dividas: AppState.data.dividas || [],
         metas: AppState.data.metas || [],
-        historico: AppState.data.historico || []
+        historico: AppState.data.historico || [],
+        contas: AppState.data.contas || [],
+        cartoes: AppState.data.cartoes || [],
+        lixeira: AppState.data.lixeira || []
       };
       const jsonStr = JSON.stringify(structuredExport, null, 2);
       const blob = new Blob([jsonStr], { type: 'application/json' });
@@ -4253,9 +4549,9 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
           };
           AppState.isLocal = false;
           persistUserSession(AppState.user);
-          // Initial empty cloud save
-          await mcSaveDoc(AppState.user.uid, AppState.user.idToken, AppState.data);
-          enterApp();
+          // Carrega apenas o armazenamento desta identidade.
+          await syncCloudOnLogin();
+          enterApp({ email, password });
         } else {
           const res = await mcSignin(email, password);
           logEvent("Login realizado com sucesso no Firebase REST.");
@@ -4272,7 +4568,7 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
 
           // Check cloud doc vs local
           await syncCloudOnLogin();
-          enterApp();
+          enterApp({ email, password });
         }
       } catch (err) {
         setAuthError(err.message);
@@ -4283,141 +4579,103 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
       }
     }
 
-    async function syncCloudOnLogin() {
-      setSyncBadge("☁️ Buscando dados...");
-
-      // Antes de comparar versões, tenta enviar qualquer alteração offline
-      // ainda pendente. Assim, uma alteração feita sem internet não vira um
-      // falso conflito simplesmente porque o usuário fechou e abriu o app.
-      try {
-        await syncPendingCloud();
-      } catch (err) {
-        logEvent("Não foi possível concluir a sincronização pendente antes do login: " + err.message);
+    async function syncCloudOnLogin(options = {}) {
+      if (deletingAccount || !AppState.user || AppState.isLocal) return false;
+      if (localStorage.getItem(`royalDeletionPending_${AppState.user.uid}`)) {
+        AppState.data = readLocalWallet() || emptyWallet();
+        setSyncBadge('⚠️ Exclusão incompleta — repita a exclusão da conta');
+        return false;
       }
-
-      const cloudData = await mcLoadDoc(AppState.user.uid, AppState.user.idToken);
-      const localDataRaw = localStorage.getItem('royalLocalData');
-      const localData = localDataRaw ? JSON.parse(localDataRaw) : null;
-      const royalApagadoEm = Number(localStorage.getItem('royalApagadoEm')) || 0;
-      const cloudAck = Number(localStorage.getItem(`royalCloudAck_${AppState.user.uid}`)) || 0;
-
-      if (!cloudData) {
-        // Cloud is empty -> migrate local if exists and not cleared
-        if (localData && (localData.updatedAt || 0) > royalApagadoEm) {
-          logEvent("Nuvem vazia: migrando dados locais existentes.");
-          AppState.data = localData;
-          await mcSaveDoc(AppState.user.uid, AppState.user.idToken, AppState.data);
-        } else {
-          AppState.data = {
-            movimentos: [],
-            recorrentes: [],
-            parcelas: [],
-            dividas: [],
-            metas: [],
-            historico: [],
-            updatedAt: Date.now()
-          };
-          await mcSaveDoc(AppState.user.uid, AppState.user.idToken, AppState.data);
+      if (cloudSyncTask) return cloudSyncTask;
+      const task = reconcileCloud(options);
+      cloudSyncTask = task;
+      const syncUid = AppState.user.uid;
+      let completed = false;
+      try { completed = await task; return completed; }
+      finally {
+        if (cloudSyncTask === task) cloudSyncTask = null;
+        // Se houve edição durante o envio, sincroniza o snapshot que ficou pendente.
+        if (completed && AppState.user?.uid === syncUid && readOfflineQueue().some(q => q.uid === syncUid)) {
+          setTimeout(() => { if (AppState.user?.uid === syncUid) syncPendingCloud(); }, 700);
         }
-        return;
       }
-
-      // Check if cloud was updated before royalApagadoEm
-      if ((cloudData.updatedAt || 0) < royalApagadoEm) {
-        logEvent("Dados da nuvem descartados pois são anteriores ao comando APAGAR.");
-        AppState.data = {
-          movimentos: [],
-          recorrentes: [],
-          parcelas: [],
-          dividas: [],
-          metas: [],
-          historico: [],
-          updatedAt: Date.now()
-        };
-        await mcSaveDoc(AppState.user.uid, AppState.user.idToken, AppState.data);
-        return;
-      }
-
-      // Compare cloud and local.
-      const localUpdatedAt = Number(localData?.updatedAt || 0);
-      const cloudUpdatedAt = Number(cloudData?.updatedAt || 0);
-
-      // Se esta versão local já foi confirmada pelo Firestore, não há conflito.
-      // Isso cobre especialmente o fluxo: offline -> salvar -> internet volta ->
-      // sincroniza -> fecha o app -> abre novamente.
-      const localAlreadyConfirmed = localData && cloudAck > 0 && localUpdatedAt <= cloudAck;
-      const sameVersion = localData && cloudData && localUpdatedAt === cloudUpdatedAt;
-
-      if (localAlreadyConfirmed || sameVersion) {
-        AppState.data = cloudData || localData;
-        localStorage.setItem(LOCAL_DATA_KEY, JSON.stringify(AppState.data));
-        if (cloudData) {
-          try {
-            localStorage.setItem(`royalCloudAck_${AppState.user.uid}`, String(cloudUpdatedAt));
-          } catch (_) {}
-        }
-        logEvent("Versão local e nuvem confirmadas; nenhum conflito necessário.");
-        return;
-      }
-
-      if (localData && localUpdatedAt > cloudUpdatedAt) {
-        // Conflito real: a versão local é mais nova e não foi confirmada pela nuvem.
-        // O login aguarda a escolha do usuário antes de executar enterApp().
-        return await new Promise((resolve) => {
-          let resolved = false;
-          const finish = (value) => {
-            if (resolved) return;
-            resolved = true;
-            resolve(value);
-          };
-
-          openModal("Conflito de Versões", `
-            <p>Encontramos dados no seu aparelho mais recentes do que os dados salvos na nuvem.</p>
-            <p>O que você prefere utilizar?</p>
-          `, [
-            {
-              label: "☁️ Usar da nuvem",
-              onClick: () => {
-                AppState.data = normalizeDataStructure(cloudData, "v2 estruturado (escolha da nuvem)");
-                localStorage.setItem(LOCAL_DATA_KEY, JSON.stringify(AppState.data));
-                try {
-                  localStorage.setItem(`royalCloudAck_${AppState.user.uid}`, String(Number(AppState.data.updatedAt || cloudUpdatedAt || Date.now())));
-                } catch (_) {}
-                setSyncBadge("☁️ Sincronizado");
-                closeModal();
-                renderAll();
-                finish(true);
-              }
-            },
-            {
-              label: "📱 Usar deste aparelho",
-              primary: true,
-              onClick: async () => {
-                AppState.data = normalizeDataStructure(localData, "v2 estruturado (escolha do aparelho)");
-                const ok = await mcSaveDoc(AppState.user.uid, AppState.user.idToken, AppState.data);
-                if (ok) {
-                  closeModal();
-                  renderAll();
-                  finish(true);
-                } else {
-                  showToast("Não foi possível confirmar a versão local na nuvem.");
-                  finish(false);
-                }
-              }
-            }
-          ]);
-        });
-      }
-
-      // Quando a nuvem é igual ou mais nova, ela passa a ser a fonte oficial.
-      AppState.data = cloudData;
-      localStorage.setItem(LOCAL_DATA_KEY, JSON.stringify(AppState.data));
-      try {
-        localStorage.setItem(`royalCloudAck_${AppState.user.uid}`, String(cloudUpdatedAt));
-      } catch (_) {}
     }
 
-    function enterApp() {
+    async function reconcileCloud(options = {}) {
+      const user = { ...AppState.user };
+      setSyncBadge('☁️ Buscando dados...');
+      const cloud = await mcLoadDoc(user.uid, user.idToken);
+      if (AppState.user?.uid !== user.uid || deletingAccount) return false;
+      let local = readLocalWallet(user.uid);
+      const queued = readOfflineQueue().filter(q => q.uid === user.uid);
+      const latestQueued = queued.reduce((latest, q) => !latest || Number(q.data?.updatedAt || 0) > Number(latest.data?.updatedAt || 0) ? q : latest, null);
+      // A fila antiga já identifica o dono e pode conter uma versão que ainda
+      // não foi migrada para o armazenamento separado por conta.
+      if (latestQueued?.data && (!local || Number(latestQueued.data.updatedAt || 0) > Number(local.updatedAt || 0))) {
+        local = normalizeDataStructure(latestQueued.data, 'fila offline desta conta');
+        localStorage.setItem(localDataKey(user.uid), JSON.stringify(local));
+      }
+      const ack = Number(localStorage.getItem(`royalCloudAck_${user.uid}`) || 0);
+      const version = localStorage.getItem(`royalCloudVersion_${user.uid}`);
+      if (!cloud && (version || ack > 0)) {
+        throw new Error('A carteira foi removida na nuvem. Os dados deste aparelho foram preservados; nenhuma recriação automática foi realizada.');
+      }
+      const pending = queued.length > 0;
+      const dirty = local && (pending || Number(local.updatedAt) > ack);
+      const unchanged = cloud && (version ? version === cloud._cloudUpdateTime : ack > 0 && ack === cloud.updatedAt);
+      const useCloud = () => {
+        if (AppState.user?.uid !== user.uid || deletingAccount) return false;
+        AppState.data = cloud;
+        localStorage.setItem(localDataKey(user.uid), JSON.stringify(cloud));
+        localStorage.setItem(`royalCloudAck_${user.uid}`, String(cloud.updatedAt));
+        if (cloud._cloudUpdateTime) localStorage.setItem(`royalCloudVersion_${user.uid}`, cloud._cloudUpdateTime);
+        writeOfflineQueue(readOfflineQueue().filter(q => q.uid !== user.uid));
+        setSyncBadge('☁️ Sincronizado');
+        renderAll();
+        return true;
+      };
+      if (!cloud || (dirty && unchanged)) {
+        AppState.data = local || emptyWallet();
+        const ok = await mcSaveDoc(user.uid, AppState.user.idToken, AppState.data, { cloud });
+        if (!ok) setSyncBadge('⚠️ Sincronização pendente');
+        return ok;
+      }
+      if (!dirty) return useCloud();
+      if (options.background && realtimeDeferredVersion === cloud._cloudUpdateTime) {
+        setSyncBadge('⚠️ Conflito — aguardando sua escolha');
+        return false;
+      }
+      // Ambas as versões mudaram: a escolha ocorre antes de qualquer escrita.
+      AppState.data = local;
+      setSyncBadge('⚠️ Conflito de versões');
+      return new Promise(resolve => {
+        let finished = false;
+        const finish = value => {
+          if (finished) return;
+          finished = true;
+          if (!value) realtimeDeferredVersion = cloud._cloudUpdateTime;
+          cancelConflict = null;
+          closeModal();
+          resolve(value);
+        };
+        cancelConflict = () => finish(false);
+        openModal('Conflito de Versões',
+          '<p>Este aparelho e a nuvem têm alterações diferentes. Escolha qual carteira deseja manter. A versão escolhida substituirá a outra.</p>', [
+          { label: 'Decidir depois', onClick: () => { setSyncBadge('⚠️ Sincronização pendente'); finish(false); } },
+          { label: '☁️ Usar da nuvem', onClick: () => finish(useCloud()) },
+          { label: '📱 Usar deste aparelho', primary: true, onClick: async () => {
+            if (AppState.user?.uid !== user.uid || deletingAccount) return finish(false);
+            const latest = readLocalWallet(user.uid) || local;
+            const ok = await mcSaveDoc(user.uid, AppState.user.idToken, latest, { cloud, force: true });
+            if (ok) { renderAll(); finish(true); }
+            else { showToast('A nuvem mudou ou está indisponível. Sincronize novamente.'); finish(false); }
+          } }
+        ]);
+      });
+    }
+
+    function enterApp(credentials = null) {
+      if (!AppState.user) return;
       document.getElementById('loginOverlay').style.display = 'none';
       const userText = AppState.isLocal ? "📱 Sem conta (local)" : (AppState.user?.nome || AppState.user?.email || "Usuário");
       document.getElementById('headerUser').textContent = userText;
@@ -4432,11 +4690,18 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
         riskEl.style.display = AppState.isLocal ? 'none' : 'block';
       }
 
-      setSyncBadge(AppState.isLocal ? "📱 Sem conta (local)" : "☁️ Sincronizado");
+      if (AppState.isLocal) setSyncBadge("📱 Sem conta (local)");
       renderAll();
+      startRealtimeSync(credentials);
     }
 
     function logout() {
+      stopRealtimeSync();
+      clearRealtimeIdentity();
+      if (AppState.saveQueueTimeout) clearTimeout(AppState.saveQueueTimeout);
+      if (cancelConflict) cancelConflict();
+      cloudSyncTask = null;
+      AppState.data = emptyWallet();
       clearUserSession();
       AppState.user = null;
       AppState.isLocal = false;
@@ -4446,6 +4711,13 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
 
     /* ===== INITIALIZATION ===== */
     document.addEventListener('DOMContentLoaded', async () => {
+      // Prepara a abertura offline antes de qualquer chamada de autenticação.
+      if ('serviceWorker' in navigator && window.isSecureContext) {
+        navigator.serviceWorker.register('./sw.js').then(() => navigator.serviceWorker.ready).then(() => {
+          logEvent('Aplicativo preparado para abrir offline neste aparelho.');
+        }).catch(e => logEvent('Preparação offline pendente: ' + e.message));
+      }
+      migrateLegacyStorage();
       // 1. Brand icons (PNG real exclusivo ou placeholder neutro)
       await setupBrandAssets();
 
@@ -4532,7 +4804,7 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
 
       document.getElementById('btnSyncNow').addEventListener('click', async () => {
         if (AppState.user && !AppState.isLocal) {
-          const ok = await mcSaveDoc(AppState.user.uid, AppState.user.idToken, AppState.data);
+          const ok = await syncPendingCloud();
           if (ok) showToast("Sincronizado com a nuvem!");
         } else {
           showToast("Dados salvos no aparelho!");
@@ -4558,9 +4830,9 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
               historico: [],
               updatedAt: ts
             };
-            await mcSaveDoc(sRes.localId, sRes.idToken, testPayload);
+            await mcSaveDoc(sRes.localId, sRes.idToken, testPayload, { diagnostic: true });
             const loaded = await mcLoadDoc(sRes.localId, sRes.idToken);
-            await mcDeleteAccount(sRes.idToken);
+            await mcDeleteAccount(sRes.idToken, sRes.localId);
 
             if (loaded && loaded.movimentos && loaded.movimentos.length > 0) {
               logEvent("Gravação estruturada (v2) confirmada");
@@ -4658,14 +4930,28 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
 
         if (confirm("ATENÇÃO: Sua conta e dados na nuvem serão excluídos permanentemente. Continuar?")) {
           try {
-            await mcDeleteAccount(AppState.user.idToken);
+            deletingAccount = true;
+            stopRealtimeSync();
+            if (AppState.saveQueueTimeout) clearTimeout(AppState.saveQueueTimeout);
+            if (cancelConflict) cancelConflict();
+            await Promise.allSettled([...saveTasks.values()]);
+            const user = { ...AppState.user };
+            const fresh = await mcRefresh(user.refreshToken);
+            await mcDeleteAccount(fresh.idToken, user.uid);
+            await clearRealtimeIdentity();
+            writeOfflineQueue(readOfflineQueue().filter(q => q.uid !== user.uid));
+            for (const key of [localDataKey(user.uid), `royalCloudAck_${user.uid}`, `royalCloudVersion_${user.uid}`, `royalApagadoEm_${user.uid}`]) localStorage.removeItem(key);
+            // Remove também a cópia de migração se pertencia a esta conta.
+            if (localStorage.getItem('royalLegacyOwner') === user.uid) localStorage.removeItem('royalLocalData');
             clearUserSession();
-            localStorage.removeItem('royalLocalData');
             alert("Conta excluída com sucesso.");
             location.reload();
           } catch (err) {
             alert("Não foi possível excluir a conta: " + err.message);
             logEvent("Falha na exclusão de conta: " + err.message);
+          } finally {
+            deletingAccount = false;
+            if (AppState.user) startRealtimeSync();
           }
         }
       });
@@ -4679,8 +4965,8 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
         }
 
         if (confirm("ATENÇÃO: Todos os lançamentos, dívidas, metas e contas serão zerados. Deseja prosseguir?")) {
-          const nowTs = Date.now();
-          localStorage.setItem('royalApagadoEm', String(nowTs));
+          const nowTs = Math.max(Date.now(), Number(AppState.data.updatedAt || 0) + 1);
+          localStorage.setItem(`royalApagadoEm_${AppState.isLocal ? 'device' : AppState.user.uid}`, String(nowTs));
           AppState.data = {
             movimentos: [],
             recorrentes: [],
@@ -4690,10 +4976,11 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
             historico: [],
             updatedAt: nowTs
           };
-          localStorage.setItem('royalLocalData', JSON.stringify(AppState.data));
+          localStorage.setItem(localDataKey(), JSON.stringify(AppState.data));
 
           if (!AppState.isLocal && AppState.user) {
-            await mcSaveDoc(AppState.user.uid, AppState.user.idToken, AppState.data);
+            queueOfflineSnapshot(AppState.data);
+            await syncPendingCloud();
           }
 
           document.getElementById('inputConfirmZerarDados').value = '';
@@ -4729,13 +5016,15 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
 
       document.getElementById('authForm').addEventListener('submit', handleAuthSubmit);
       document.getElementById('btnContinuarLocal').addEventListener('click', () => {
+        stopRealtimeSync();
+        clearRealtimeIdentity();
         AppState.isLocal = true;
         AppState.user = {
           uid: "local_" + uidGen(),
           email: "local@aparelho",
           nome: "Sem conta (local)"
         };
-        const raw = localStorage.getItem('royalLocalData');
+        const raw = localStorage.getItem(localDataKey());
         AppState.data = raw ? normalizeDataStructure(JSON.parse(raw), "v2 estruturado (local)") : {
           movimentos: [],
           recorrentes: [],
@@ -4797,7 +5086,7 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
             // Modo offline autenticado: usamos a identidade e os dados já cacheados.
             AppState.user = sess;
             AppState.isLocal = false;
-            const raw = localStorage.getItem(LOCAL_DATA_KEY);
+            const raw = localStorage.getItem(localDataKey());
             if (raw) {
               try { AppState.data = normalizeDataStructure(JSON.parse(raw), "v2 estruturado (offline)"); } catch (_) {}
             }
@@ -4819,17 +5108,16 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
             AppState.isLocal = false;
             persistUserSession(AppState.user);
             await syncCloudOnLogin();
-            await syncPendingCloud();
             enterApp();
           }
         } catch (err) {
-          if (!navigator.onLine) {
+          if (!navigator.onLine || err.code === 'NETWORK_UNAVAILABLE') {
             // Mesmo com token antigo, os dados locais continuam disponíveis offline.
             try {
               const sess = JSON.parse(sessionRaw);
               AppState.user = sess;
               AppState.isLocal = false;
-              const raw = localStorage.getItem(LOCAL_DATA_KEY);
+              const raw = localStorage.getItem(localDataKey());
               if (raw) AppState.data = normalizeDataStructure(JSON.parse(raw), "v2 estruturado (offline-fallback)");
               setSyncBadge("📴 Offline — aguardando internet");
               enterApp();
@@ -4869,16 +5157,19 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
           // Dá um pequeno tempo para a conexão estabilizar antes do primeiro envio.
           setTimeout(async () => {
             try {
+              if (!AppState.user || AppState.isLocal || deletingAccount) return;
+              const reconnectUid = AppState.user.uid;
               if (AppState.user.refreshToken && (!AppState.user.tokenExpiresAt || Date.now() >= AppState.user.tokenExpiresAt - 60000)) {
                 const refreshed = await mcRefresh(AppState.user.refreshToken);
+                if (AppState.user?.uid !== reconnectUid || deletingAccount) return;
                 AppState.user.idToken = refreshed.idToken;
                 AppState.user.refreshToken = refreshed.refreshToken;
                 AppState.user.tokenExpiresAt = Date.now() + (Number(refreshed.expiresIn || 3600) * 1000);
                 persistUserSession(AppState.user);
               }
               await syncPendingCloud();
-              await syncCloudOnLogin();
               renderAll();
+              startRealtimeSync();
             } catch (e) {
               setSyncBadge('⚠️ Sincronização pendente');
               logEvent('Internet voltou, mas a sincronização ainda não foi concluída: ' + e.message);
@@ -4886,19 +5177,20 @@ table.shell-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 
           }, 800);
         }
       });
-      window.addEventListener('offline', updateConnectionUI);
+      window.addEventListener('offline', () => { stopRealtimeSync(); updateConnectionUI(); });
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState !== 'hidden' && AppState.user && !AppState.isLocal && navigator.onLine) {
+          if (realtimeUnsubscribe || realtimeFallback) {
+            realtimePending = true;
+            scheduleRealtimeCheck(AppState.user.uid, realtimeGeneration);
+          } else startRealtimeSync();
+        }
+      });
       updateConnectionUI();
 
-      // Service Worker: permite abrir a interface cacheada sem internet quando hospedado em HTTPS.
-      if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
-        navigator.serviceWorker.register('./sw.js').then(() => {
-          logEvent('Service Worker offline registrado.');
-        }).catch((e) => {
-          logEvent('Service Worker não registrado: ' + e.message);
-        });
-      }
     });
   </script>
+<script src="./royal-wallet-features.js"></script>
 <script>
 /* Skip artifact shell — fixed helpers served beside every artifact. */
 (function () {

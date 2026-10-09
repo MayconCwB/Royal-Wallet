@@ -1,0 +1,10 @@
+public/
+repository/
+node_modules/
+firebase-debug.log
+firebase-debug.*.log
+.firebase/
+Royal_Wallet_backup*.html
+Royal_Wallet_offline_com_csv/
+Royal_Wallet_offline_com_csv.zip
+royal-wallet-backup.json

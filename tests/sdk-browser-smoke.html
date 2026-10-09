@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="pt-BR">
+<meta charset="utf-8">
+<title>Verificação do Firebase SDK</title>
+<h1>Verificação do carregamento do Firebase</h1>
+<p id="result" role="status">Carregando os módulos oficiais…</p>
+<p>Esta verificação não entra em contas nem acessa carteiras.</p>
+<script type="module">
+  const result = document.getElementById('result');
+  try {
+    const [appApi, authApi, fsApi] = await Promise.all([
+      import('https://www.gstatic.com/firebasejs/12.4.0/firebase-app.js'),
+      import('https://www.gstatic.com/firebasejs/12.4.0/firebase-auth.js'),
+      import('https://www.gstatic.com/firebasejs/12.4.0/firebase-firestore.js')
+    ]);
+    const app = appApi.initializeApp({ apiKey: 'demo-api-key', projectId: 'demo-royal-wallet' }, 'sdk-smoke');
+    const auth = authApi.getAuth(app);
+    await auth.authStateReady();
+    fsApi.getFirestore(app);
+    if (typeof fsApi.onSnapshot !== 'function' || typeof authApi.signInWithEmailAndPassword !== 'function') {
+      throw new Error('API necessária indisponível');
+    }
+    result.textContent = 'OK — módulos carregados e APIs de autenticação e tempo real disponíveis.';
+    await appApi.deleteApp(app);
+  } catch (error) {
+    result.textContent = 'Falha no carregamento: ' + error.message;
+  }
+</script>
+</html>
