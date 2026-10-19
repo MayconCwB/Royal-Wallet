@@ -1,9 +1,12 @@
-const CACHE_NAME = 'royal-wallet-shell-v5';
+const CACHE_NAME = 'royal-wallet-shell-v6';
 const APP_URL = './index.html';
 
 self.addEventListener('install', event => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then(cache => cache.addAll([APP_URL, './', './royal-wallet-features.js']))
+    fetch('./app-assets.json', { cache: 'no-store' }).then(response => {
+      if (!response.ok) throw Error('Lista de recursos offline indisponível.');
+      return response.json();
+    }).then(files => caches.open(CACHE_NAME).then(cache => cache.addAll(['./', './app-assets.json', ...files.filter(file => file !== 'sw.js').map(file => './' + file)])))
       .then(() => self.skipWaiting())
   );
 });
