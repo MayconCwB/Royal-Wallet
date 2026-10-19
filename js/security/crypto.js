@@ -42,8 +42,16 @@ globalThis.WalletCrypto = (() => {
   function session(owner, raw, metadata) {
     if (typeof owner !== 'string' || !owner || raw.byteLength !== 32) throw Error('Carteira não identificada.');
     const keyTask = aes(raw); raw.fill(0);
+    return sessionForKey(owner, keyTask, metadata);
+  }
+  function sessionForKey(owner, keyTask, metadata) {
     const meta = JSON.parse(JSON.stringify(metadata));
     return Object.freeze({ owner, metadata: Object.freeze(meta),
+      withMetadata(next) {
+        validate(next);
+        if (next.keyId !== meta.keyId) throw Error('A chave da carteira mudou.');
+        return sessionForKey(owner, keyTask, next);
+      },
       async encrypt(value, kind = 'wallet') {
         const bytes = utf8.encode(JSON.stringify(value));
         if (bytes.byteLength > 1048576) throw Error('A carteira excedeu o limite seguro. Exporte um backup antes de continuar.');

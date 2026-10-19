@@ -121,6 +121,8 @@ globalThis.WalletPrivacy = (() => {
     if (metadata.keyId !== session.metadata.keyId) throw Error('A chave da nuvem mudou. Desbloqueie a carteira novamente antes de sincronizar.');
     const data = await session.decrypt(fromFsValue(fields.payload), 'cloud-wallet');
     if (Number(data.updatedAt) !== Number(fromFsValue(fields.atualizadoEm))) throw Error('A versão da carteira não passou na verificação.');
+    // Um aparelho já aberto deve preservar a nova senha recuperada em outro.
+    if (walletStorage.getItem(`royalVaultMetadataPending_${uid}`) !== '1') WalletStorage.adoptMetadata(uid, metadata);
     return data;
   }
   function download(name, content, type = 'application/json') {

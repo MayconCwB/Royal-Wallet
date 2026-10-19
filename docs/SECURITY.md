@@ -57,7 +57,7 @@ Não volte a publicar um cliente que só compreende v2 depois de contas terem mi
 
 ## Validação e limites
 
-Os testes cobrem senha incorreta, recuperação, IVs distintos, identidade e finalidade incorretas, conteúdo adulterado, armazenamento, fila, migração, erro de quota, transmissão cifrada, cache offline e dois aparelhos simulados. Há teste de interface para impedir que identificadores importados se tornem JavaScript executável. O HTML restringe scripts a arquivos locais e ao domínio oficial dos módulos Firebase por Content Security Policy; a autenticação não depende de handlers inline.
+Os testes cobrem senha incorreta, recuperação, IVs distintos, identidade e finalidade incorretas, conteúdo adulterado, armazenamento, fila, migração, erro de quota, transmissão cifrada, cache offline e dois aparelhos simulados. Há teste de interface para impedir que identificadores importados se tornem JavaScript executável. O HTML restringe scripts a arquivos locais e ao domínio oficial dos módulos Firebase por Content Security Policy; a autenticação não depende de handlers inline. O teste adicional em Chrome headless com viewport de 390px confirmou Web Crypto nativa, ausência de violações CSP, instalação do cache e reabertura/desbloqueio offline, com perfil temporário e dados fictícios.
 
 Esses testes não equivalem a uma auditoria independente de criptografia, a um teste em celular real ou a uma certificação de conformidade. A implementação é específica desta aplicação e requer revisão de segurança antes de uso amplo.
 

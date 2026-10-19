@@ -123,7 +123,14 @@ globalThis.WalletStorage = (() => {
     memory.clear(); sessions.clear(); tasks.clear(); failures.clear(); owner = null;
   }
   function current(uid = owner) { return requireSession(uid); }
+  function adoptMetadata(uid, next) {
+    const session = requireSession(uid);
+    if (JSON.stringify(session.metadata) === JSON.stringify(next)) return;
+    const updated = session.withMetadata(next);
+    native.setItem(metaKey(uid), JSON.stringify(updated.metadata));
+    sessions.set(uid, updated);
+  }
   return Object.freeze({ getItem, setItem, removeItem, metadata, unlock, lock, flush, current,
-    ready: uid => !!sessions.get(uid), hasPending: () => pending.size > 0 || failures.size > 0 });
+    adoptMetadata, ready: uid => !!sessions.get(uid), hasPending: () => pending.size > 0 || failures.size > 0 });
 })();
 const walletStorage = WalletStorage;

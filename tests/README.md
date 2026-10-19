@@ -18,6 +18,12 @@ O protótipo de regras foi avaliado com 16 casos sintéticos por
 Esse procedimento usa apenas a API de avaliação de regras, não publica regras
 e não grava documentos. Consulte `docs/SECURITY.md` antes de implantar.
 
+`npm run test:browser` usa Chrome/Edge headless com perfil temporário, viewport
+de 390px, sem conexão externa. Verifica Web Crypto nativa, política CSP,
+cache do Service Worker e reabertura/desbloqueio offline. Para outro executável
+Chromium, informe `ROYAL_TEST_BROWSER`. A evidência com dados fictícios fica
+em `.artifacts/offline-criptografado.png`, fora do repositório e da publicação.
+
 Para conferir o carregamento do Firebase no navegador, sirva a pasta do projeto
 e abra `/tests/sdk-browser-smoke.html`. O resultado esperado é "OK".
 

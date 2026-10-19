@@ -683,6 +683,27 @@ test('Falha de armazenamento impede migração e preserva o original', async () 
   assert.equal(storage.get('royalLocalData_A'), original);
   assert.equal(context.WalletStorage.ready('A'), false);
 });
+test('Aparelho já aberto não restaura senha antiga depois da recuperação em outro', async () => {
+  const a = setup({ secure: true }), b = setup({ secure: true });
+  const created = await a.context.WalletCrypto.create('A', 'senha antiga longa e privada');
+  const recovered = await a.context.WalletCrypto.recover('A', created.session.metadata, created.recoveryKey, 'senha nova longa e privada');
+  const older = await b.context.WalletCrypto.unlock('A', created.session.metadata, 'senha antiga longa e privada');
+  await a.context.WalletStorage.unlock('A', recovered); await b.context.WalletStorage.unlock('A', older);
+  const original = a.wallet(1000, 'Preservar nova senha');
+  const fields = await a.context.WalletPrivacy.encodeCloud('A', original);
+  let written;
+  b.mock(async (_, options = {}) => {
+    if (options.method === 'PATCH') { written = JSON.parse(options.body).fields; return { ok: true, status: 200, data: { updateTime: 'v3' } }; }
+    return { ok: true, status: 200, data: { fields, updateTime: 'v2' } };
+  });
+  const changed = b.wallet(1200, 'Nova edição');
+  assert.equal(await b.api.mcSaveDoc('A', 'token', changed, { force: true }), true);
+  const published = b.context.WalletStorage.current('A').metadata;
+  assert.equal(published.password.ciphertext, recovered.metadata.password.ciphertext);
+  assert.equal(written.encryption.mapValue.fields.password.mapValue.fields.ciphertext.stringValue, recovered.metadata.password.ciphertext);
+  await b.context.WalletCrypto.unlock('A', published, 'senha nova longa e privada');
+  await assert.rejects(b.context.WalletCrypto.unlock('A', published, 'senha antiga longa e privada'));
+});
 test('Carteira bloqueada recusa gravação financeira em texto aberto', () => {
   const { context, storage, wallet } = setup({ secure: true });
   assert.throws(() => context.WalletStorage.setItem('royalLocalData_A', JSON.stringify(wallet(100))));

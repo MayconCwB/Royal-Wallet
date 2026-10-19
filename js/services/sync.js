@@ -262,8 +262,6 @@
 
       setSyncBadge("☁️ Sincronizando...");
       let url = `${FS_URL}/${uid}`;
-      const firestoreBody = { fields: await WalletPrivacy.encodeCloud(uid, dataObj) };
-
       try {
         const cloud = Object.hasOwn(options, 'cloud') ? options.cloud : await mcLoadDoc(uid, idToken);
         const ack = Number(walletStorage.getItem(`royalCloudAck_${uid}`) || 0);
@@ -277,6 +275,7 @@
         if (cloud && !cloud._cloudUpdateTime) throw new Error('A versão da nuvem não pôde ser verificada.');
         url += cloud ? `?currentDocument.updateTime=${encodeURIComponent(cloud._cloudUpdateTime)}` : '?currentDocument.exists=false';
         if (deletingAccount && !options.diagnostic) return false;
+        const firestoreBody = { fields: await WalletPrivacy.encodeCloud(uid, dataObj) };
         let res = await fbFetch(url, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${idToken}` },
