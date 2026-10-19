@@ -1,0 +1,4 @@
+.vault-overlay{position:fixed;inset:0;z-index:20000;display:grid;place-items:center;background:#14100ff5;padding:16px;overflow:auto}
+.vault-dialog{width:min(100%,520px);max-height:calc(100dvh - 32px);overflow:auto;border:1px solid var(--gold,#b8860b);border-radius:16px;padding:24px;background:var(--surface,#241e1b);color:var(--text,#eee)}
+.vault-dialog h2{margin-top:0}.vault-dialog label{display:block;margin-top:16px}.vault-dialog .input-field{width:100%;margin:8px 0 16px}.vault-dialog button{margin:8px 8px 0 0}.vault-dialog .vault-check{display:flex;align-items:flex-start;gap:10px;line-height:1.5}.vault-dialog .vault-check input{margin-top:5px;flex-shrink:0}
+.vault-dialog [hidden]{display:none!important}#vaultError{color:#ffb4aa;min-height:1.5em}#vaultRecoveryOutput{font-family:monospace;overflow-wrap:anywhere}

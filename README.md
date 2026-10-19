@@ -14,15 +14,21 @@ Controle financeiro pessoal em PT-BR, com contas individuais no Firebase e modo 
 
 ## Testar
 
-Execute `node tests/wallet-regression.cjs`. Consulte `tests/README.md` para os testes entre aparelhos.
+Use Node.js 24.15 ou posterior, execute `npm ci` e depois `npm test`. Os testes usam dados fictícios e não entram em contas reais. Consulte `tests/README.md` para mais detalhes.
 Para testar localmente, sirva a pasta por HTTP e abra `index.html`.
+
+## Estrutura e proteção dos dados
+
+O HTML contém a estrutura das telas; os estilos estão em `assets/css`, a marca em `assets/brand` e o código em `js`, separado entre dados, cálculos, telas, serviços, sessão, inicialização e segurança. Veja [Arquitetura](docs/ARCHITECTURE.md).
+
+A versão 1.1 inclui criptografia ponta a ponta dos dados financeiros. Cada carteira usa uma senha própria e uma chave de recuperação, sem guardar essas credenciais em disco ou enviá-las ao Firebase. Veja [Segurança, migração e publicação](docs/SECURITY.md) antes de ativar a nova versão.
 
 ## Publicar uma versão de teste
 
 1. Execute `node scripts/prepare-release.cjs`.
 2. Execute `npx firebase-tools hosting:channel:deploy royal-wallet-melhorias --expires 7d --project minha-carteira-app-7b58d`.
 
-A pasta `public` inclui somente os três arquivos do aplicativo. Backups pessoais, testes e imagens soltas não são publicados.
+A pasta `public` inclui somente os recursos enumerados em `app-assets.json`. Backups pessoais, testes, chaves e dependências de desenvolvimento não são publicados.
 O canal de teste usa o mesmo Firebase do aplicativo: alterações feitas com uma conta real são sincronizadas nessa conta. Use uma conta de teste para a validação entre aparelhos.
 
 ## Convenções financeiras

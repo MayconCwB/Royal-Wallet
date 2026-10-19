@@ -1,4 +1,6 @@
 public/
+.artifacts/
+.security-analysis.local.md
 repository/
 node_modules/
 firebase-debug.log

@@ -381,8 +381,7 @@
     }
     // Identifica a origem de cada movimento sem alterar os botões já existentes.
     document.querySelectorAll('#movimentosTbody tr').forEach(row => {
-      const button = row.querySelector('[onclick*="handleEditMovimento"]');
-      const id = button?.getAttribute('onclick')?.match(/handleEditMovimento\('([^']+)'\)/)?.[1];
+      const id = row.dataset.movementId;
       const m = AppState.data.movimentos.find(x => x.id === id);
       if (!m) return;
       const text = m.classe === 'pagamento_fatura' ? 'Pagamento de fatura' : m.cartaoId ? 'Compra no cartão' : AppState.data.contas.find(c => c.id === m.contaId)?.nome;
@@ -396,9 +395,7 @@
   logout = () => { const toast = document.getElementById('walletUndoToast'); if (toast) toast.hidden = true; if (undoTimer) clearTimeout(undoTimer); baseLogout(); };
   window.WalletFeatures = { accountBalance, invoiceMonth, invoices, payInvoice, selectedCsvItems, summaryInsights, trashEntry, restoreTrash, saveEntry, ensureData };
   document.addEventListener('DOMContentLoaded', () => {
-    const style = document.createElement('style');
-    style.textContent = '.wallet-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:1rem}.wallet-card{padding:1.25rem;overflow-wrap:anywhere}.wallet-card .btn{margin:4px}.wallet-muted{font-size:.85rem;color:var(--text-muted)}.wallet-invoice{padding:1rem 0;border-top:1px solid var(--border)}#walletUndoToast{position:fixed;left:16px;right:16px;bottom:60px;z-index:550;background:var(--surface);border:1px solid var(--gold);border-radius:12px;padding:12px;max-width:480px;margin:auto;box-shadow:0 8px 32px #0006}#walletUndoToast button{margin-left:12px}#walletInsights{padding:1.25rem;margin-bottom:1rem}';
-    document.head.append(style);
+
     const nav = document.getElementById('drawerNav');
     const navButton = document.createElement('button'); navButton.className = 'nav-item-btn'; navButton.dataset.tab = 'contascartoes'; navButton.textContent = '🏦 Contas e cartões'; navButton.onclick = () => switchTab('contascartoes'); nav.append(navButton);
     const trashButton = document.createElement('button'); trashButton.className = 'nav-item-btn'; trashButton.dataset.tab = 'lixeira'; trashButton.textContent = '↩️ Lixeira'; trashButton.onclick = () => switchTab('lixeira'); nav.append(trashButton);

@@ -1,4 +1,5 @@
 {
+  "firestore": { "rules": "firestore.rules" },
   "hosting": {
     "site": "minha-carteira-app-7b58d",
     "public": "public",

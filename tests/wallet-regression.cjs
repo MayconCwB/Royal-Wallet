@@ -2,16 +2,21 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const assert = require('node:assert/strict');
 const path = require('node:path');
+const { webcrypto } = require('node:crypto');
 const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
-const scripts = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)].map(m => m[1]);
+const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)].map(m => {
+  const source = m[1].match(/src="\.\/([^"]+)"/);
+  return source ? fs.readFileSync(path.join(__dirname, '..', source[1]), 'utf8') : m[2];
+});
 for (const script of scripts) new vm.Script(script);
 new vm.Script(fs.readFileSync(path.join(__dirname, '..', 'sw.js'), 'utf8'));
 
-function setup() {
+function setup({ secure = false } = {}) {
   const storage = new Map();
   const elements = new Map();
   const context = vm.createContext({
     console, navigator: { onLine: true }, setTimeout, clearTimeout, AbortController,
+    TextEncoder, TextDecoder, btoa, atob, crypto: webcrypto,
     window: {}, document: {
       addEventListener() {},
       getElementById(id) {
@@ -31,8 +36,16 @@ function setup() {
     },
     fetch: () => { throw new Error('Rede real proibida nos testes'); }
   });
-  vm.runInContext(scripts.find(s => s.includes('const AppState')), context);
-  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'royal-wallet-features.js'), 'utf8'), context);
+  if (!secure) {
+    context.walletStorage = context.localStorage;
+    context.WalletStorage = { flush: async () => {} };
+    context.WalletPrivacy = { ready: () => true, prepare: async () => {}, endSession() {}, cloudSaved() {}, needsMigration: () => false,
+      encodeCloud: async (_, data) => Object.fromEntries(['movimentos', 'recorrentes', 'parcelas', 'dividas', 'metas', 'historico', 'contas', 'cartoes', 'lixeira'].map(key => [key, context.api.toFsValue(data[key] || [])])) };
+  }
+  for (const script of scripts) {
+    if (!secure && (script.includes('globalThis.WalletCrypto =') || script.includes('globalThis.WalletStorage =') || script.includes('globalThis.WalletPrivacy ='))) continue;
+    vm.runInContext(script, context);
+  }
   vm.runInContext(`
     renderAll = () => {};
     logEvent = () => {};
@@ -364,7 +377,7 @@ test('Service Worker remove apenas caches próprios e preserva HTML em caso de e
     URL, setTimeout, clearTimeout, Response,
     self: { addEventListener: (name, handler) => { handlers[name] = handler; },
       clients: { claim: async () => {} }, location: { origin: 'https://wallet.example' } },
-      caches: { keys: async () => ['royal-wallet-shell-v1', 'royal-wallet-shell-v5', 'other-app'], match: async () => undefined,
+      caches: { keys: async () => ['royal-wallet-shell-v1', 'royal-wallet-shell-v6', 'other-app'], match: async () => undefined,
       delete: async key => removed.push(key), open: async () => ({ put: async () => stored++ }) },
     fetch: async () => ({ ok: false, status: 503 })
   });
@@ -573,6 +586,148 @@ test('Normalização preserva contas, cartões, lixeira e vínculos de faturas',
   assert.equal(normalized.cartoes[0].fechamento, 20);
   assert.equal(normalized.movimentos[0].classe, 'pagamento_fatura');
   assert.equal(normalized.lixeira[0].item.pago, 5);
+});
+
+test('AES-GCM cifra dados e usa um IV diferente em cada gravação', async () => {
+  const { context } = setup({ secure: true }); const crypto = context.WalletCrypto;
+  const { session } = await crypto.create('A', 'minha senha longa e privada');
+  const data = { segredo: 'Mercado privado 38472', valor: 19.95 };
+  const a = await session.encrypt(data), b = await session.encrypt(data);
+  assert.notEqual(a.iv, b.iv); assert.notEqual(a.ciphertext, b.ciphertext);
+  assert(!JSON.stringify(a).includes(data.segredo));
+  assert.equal(JSON.stringify(await session.decrypt(a)), JSON.stringify(data));
+  assert.equal('key' in session, false); assert.equal('password' in session, false);
+});
+test('Senha incorreta, troca de usuário, contexto e dados adulterados são rejeitados', async () => {
+  const { context } = setup({ secure: true }); const crypto = context.WalletCrypto;
+  const { session } = await crypto.create('A', 'minha senha longa e privada');
+  const envelope = await session.encrypt({ descricao: 'Não alterar' }, 'backup');
+  await assert.rejects(crypto.unlock('A', session.metadata, 'senha errada'));
+  await assert.rejects(crypto.unlock('B', session.metadata, 'minha senha longa e privada'));
+  await assert.rejects(session.decrypt(envelope, 'wallet'));
+  const tampered = { ...envelope, ciphertext: (envelope.ciphertext[0] === 'A' ? 'B' : 'A') + envelope.ciphertext.slice(1) };
+  await assert.rejects(session.decrypt(tampered, 'backup'));
+  await assert.rejects(crypto.unlock('A', { ...session.metadata, kdf: { ...session.metadata.kdf, iterations: 1 } }, 'minha senha longa e privada'));
+});
+test('Recuperação cria nova senha sem alterar a chave da carteira', async () => {
+  const { context } = setup({ secure: true }); const crypto = context.WalletCrypto;
+  const created = await crypto.create('A', 'primeira senha bem comprida');
+  const envelope = await created.session.encrypt({ antigo: 'dado preservado' });
+  const recovered = await crypto.recover('A', created.session.metadata, created.recoveryKey, 'nova senha bastante comprida');
+  assert.equal((await recovered.decrypt(envelope)).antigo, 'dado preservado');
+  const unlocked = await crypto.unlock('A', recovered.metadata, 'nova senha bastante comprida');
+  assert.equal(unlocked.metadata.keyId, created.session.metadata.keyId);
+  await assert.rejects(crypto.unlock('A', recovered.metadata, 'primeira senha bem comprida'));
+  await assert.rejects(crypto.recover('A', created.session.metadata, 'RW1-' + '0'.repeat(64), 'nova senha bastante comprida'));
+});
+test('Migração local cifra snapshot, fila e cópia legada antes de liberá-los', async () => {
+  const { context, api, storage, wallet } = setup({ secure: true });
+  const data = wallet(1234, 'Lançamento particular 98347');
+  storage.set('royalLocalData_A', JSON.stringify(data));
+  storage.set('royalLocalData', JSON.stringify(data)); storage.set('royalLegacyOwner', 'A');
+  storage.set('royalSyncQueueV1', JSON.stringify([{ uid: 'A', data }, { uid: 'B', data: wallet(1200, 'Outro usuário') }]));
+  const created = await context.WalletCrypto.create('A', 'minha senha longa e privada');
+  await context.WalletStorage.unlock('A', created.session);
+  assert(![...storage.values()].join('').includes('Lançamento particular 98347'));
+  assert.equal(api.readLocalWallet().movimentos[0].desc, 'Lançamento particular 98347');
+  assert.equal(api.readOfflineQueue().length, 1);
+  assert.equal(JSON.parse(storage.get('royalSyncQueueV1'))[0].uid, 'B');
+  assert.equal(storage.has('royalLocalData'), false);
+  await context.WalletStorage.lock();
+  assert.throws(() => api.readLocalWallet());
+  const fresh = await context.WalletCrypto.unlock('A', context.WalletStorage.metadata('A'), 'minha senha longa e privada');
+  await context.WalletStorage.unlock('A', fresh);
+  assert.equal(api.readLocalWallet().movimentos[0].desc, 'Lançamento particular 98347');
+});
+test('Persistência serializada nunca grava snapshots ou fila em texto aberto', async () => {
+  const { context, api, storage, wallet } = setup({ secure: true });
+  const { session } = await context.WalletCrypto.create('A', 'minha senha longa e privada');
+  await context.WalletStorage.unlock('A', session);
+  const written = []; const original = context.localStorage.setItem;
+  context.localStorage.setItem = (key, value) => { written.push(String(value)); original(key, value); };
+  for (let ts = 200; ts <= 202; ts++) { api.AppState.data = wallet(ts, 'Segredo financeiro 12873'); api.triggerAutoSave(); }
+  clearTimeout(api.AppState.saveQueueTimeout);
+  await context.WalletStorage.flush();
+  assert(written.length >= 6); assert(written.every(text => !text.includes('Segredo financeiro 12873')));
+  await context.WalletStorage.lock();
+  const reopened = await context.WalletCrypto.unlock('A', context.WalletStorage.metadata('A'), 'minha senha longa e privada');
+  await context.WalletStorage.unlock('A', reopened);
+  assert.equal(api.readLocalWallet().movimentos[0].desc, 'Segredo financeiro 12873');
+  assert(JSON.parse(storage.get('royalVaultData_A')).ciphertext);
+});
+test('Nuvem recebe somente envelope cifrado e restaura todos os dados', async () => {
+  const { context, api, mock, wallet } = setup({ secure: true });
+  const { session } = await context.WalletCrypto.create('A', 'minha senha longa e privada');
+  await context.WalletStorage.unlock('A', session);
+  const data = wallet(300, 'Dívida confidencial 7264'); let fields;
+  mock(async (_, options) => {
+    assert.equal(options.method, 'PATCH'); fields = JSON.parse(options.body).fields;
+    assert(!options.body.includes('Dívida confidencial 7264'));
+    return { ok: true, status: 200, data: { updateTime: 'encrypted-v1' } };
+  });
+  assert.equal(await api.mcSaveDoc('A', 'token', data, { cloud: null }), true);
+  assert.deepEqual(Object.keys(fields).sort(), ['atualizadoEm', 'encryption', 'payload', 'v']);
+  assert.equal(fields.v.stringValue, 'e2ee-1');
+  mock(async () => ({ ok: true, status: 200, data: { fields, updateTime: 'encrypted-v1' } }));
+  assert.equal((await api.mcLoadDoc('A', 'token')).movimentos[0].desc, 'Dívida confidencial 7264');
+  fields.atualizadoEm = api.toFsValue(999);
+  await assert.rejects(api.mcLoadDoc('A', 'token'));
+});
+test('Falha de armazenamento impede migração e preserva o original', async () => {
+  const { context, storage, wallet } = setup({ secure: true });
+  const original = JSON.stringify(wallet(100, 'Preservar antes de cifrar'));
+  storage.set('royalLocalData_A', original);
+  const { session } = await context.WalletCrypto.create('A', 'minha senha longa e privada');
+  context.localStorage.setItem = () => { throw Error('QuotaExceededError'); };
+  await assert.rejects(context.WalletStorage.unlock('A', session));
+  assert.equal(storage.get('royalLocalData_A'), original);
+  assert.equal(context.WalletStorage.ready('A'), false);
+});
+test('Aparelho já aberto não restaura senha antiga depois da recuperação em outro', async () => {
+  const a = setup({ secure: true }), b = setup({ secure: true });
+  const created = await a.context.WalletCrypto.create('A', 'senha antiga longa e privada');
+  const recovered = await a.context.WalletCrypto.recover('A', created.session.metadata, created.recoveryKey, 'senha nova longa e privada');
+  const older = await b.context.WalletCrypto.unlock('A', created.session.metadata, 'senha antiga longa e privada');
+  await a.context.WalletStorage.unlock('A', recovered); await b.context.WalletStorage.unlock('A', older);
+  const original = a.wallet(1000, 'Preservar nova senha');
+  const fields = await a.context.WalletPrivacy.encodeCloud('A', original);
+  let written;
+  b.mock(async (_, options = {}) => {
+    if (options.method === 'PATCH') { written = JSON.parse(options.body).fields; return { ok: true, status: 200, data: { updateTime: 'v3' } }; }
+    return { ok: true, status: 200, data: { fields, updateTime: 'v2' } };
+  });
+  const changed = b.wallet(1200, 'Nova edição');
+  assert.equal(await b.api.mcSaveDoc('A', 'token', changed, { force: true }), true);
+  const published = b.context.WalletStorage.current('A').metadata;
+  assert.equal(published.password.ciphertext, recovered.metadata.password.ciphertext);
+  assert.equal(written.encryption.mapValue.fields.password.mapValue.fields.ciphertext.stringValue, recovered.metadata.password.ciphertext);
+  await b.context.WalletCrypto.unlock('A', published, 'senha nova longa e privada');
+  await assert.rejects(b.context.WalletCrypto.unlock('A', published, 'senha antiga longa e privada'));
+});
+test('Carteira bloqueada recusa gravação financeira em texto aberto', () => {
+  const { context, storage, wallet } = setup({ secure: true });
+  assert.throws(() => context.WalletStorage.setItem('royalLocalData_A', JSON.stringify(wallet(100))));
+  assert.throws(() => context.WalletStorage.setItem('royalSyncQueueV1', '[]'));
+  assert.equal(storage.size, 0);
+});
+test('Depois da ativação a nuvem não pode voltar ao formato sem criptografia', async () => {
+  const { context, api, mock, wallet, cloudResponse } = setup({ secure: true });
+  const { session } = await context.WalletCrypto.create('A', 'minha senha longa e privada');
+  await context.WalletStorage.unlock('A', session); context.WalletPrivacy.cloudSaved('A');
+  mock(async () => cloudResponse(wallet(500)));
+  await assert.rejects(api.mcLoadDoc('A', 'token'), /formato recebido não é confiável/);
+});
+test('Cache offline inclui todos os scripts, estilos e imagens separados', async () => {
+  const assets = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'app-assets.json'), 'utf8'));
+  const refs = [...html.matchAll(/(?:src|href)="\.\/([^"]+)"/g)].map(match => match[1]);
+  for (const ref of refs) assert(assets.includes(ref), ref);
+  for (const asset of assets) assert(fs.existsSync(path.join(__dirname, '..', asset)), asset);
+  const handlers = {}; let cached;
+  const context = vm.createContext({ self: { addEventListener: (name, fn) => { handlers[name] = fn; }, skipWaiting: async () => {} },
+    fetch: async () => ({ ok: true, json: async () => assets }), caches: { open: async () => ({ addAll: async files => { cached = files; } }) } });
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'sw.js'), 'utf8'), context);
+  let installation; handlers.install({ waitUntil: task => { installation = task; } }); await installation;
+  for (const ref of refs) assert(cached.includes('./' + ref), ref);
 });
 
 (async () => {

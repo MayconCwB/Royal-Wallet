@@ -1,0 +1,51 @@
+rules_version = '2';
+// Protótipo para revisão antes da publicação junto com o cliente E2EE.
+// carteiras/{uid}: v (string), atualizadoEm (int), encryption (map), payload (map).
+// Nenhum dado financeiro em claro é aceito em create/update. Leituras legadas
+// continuam disponíveis ao dono para migração; qualquer outro caminho é negado.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function owner(uid) { return request.auth != null && request.auth.uid == uid; }
+    function wrappedKey(value) {
+      return value is map && value.keys().hasAll(['iv', 'ciphertext'])
+        && value.keys().hasOnly(['iv', 'ciphertext'])
+        && value.iv is string && value.iv.size() == 16
+        && value.ciphertext is string && value.ciphertext.size() == 64;
+    }
+    function validEncryption(value) {
+      return value is map
+        && value.keys().hasAll(['version', 'algorithm', 'keyId', 'kdf', 'password', 'recovery'])
+        && value.keys().hasOnly(['version', 'algorithm', 'keyId', 'kdf', 'password', 'recovery'])
+        && value.version == 1 && value.algorithm == 'AES-256-GCM'
+        && value.keyId is string && value.keyId.size() == 24
+        && value.kdf is map
+        && value.kdf.keys().hasAll(['name', 'hash', 'iterations', 'salt'])
+        && value.kdf.keys().hasOnly(['name', 'hash', 'iterations', 'salt'])
+        && value.kdf.name == 'PBKDF2' && value.kdf.hash == 'SHA-256'
+        && value.kdf.iterations == 600000 && value.kdf.salt is string && value.kdf.salt.size() == 24
+        && wrappedKey(value.password) && wrappedKey(value.recovery);
+    }
+    function validWallet(data) {
+      return data.keys().hasAll(['v', 'atualizadoEm', 'encryption', 'payload'])
+        && data.keys().hasOnly(['v', 'atualizadoEm', 'encryption', 'payload'])
+        && data.v == 'e2ee-1' && data.atualizadoEm is int && data.atualizadoEm >= 0
+        && validEncryption(data.encryption) && data.payload is map
+        && data.payload.keys().hasAll(['format', 'version', 'keyId', 'iv', 'ciphertext'])
+        && data.payload.keys().hasOnly(['format', 'version', 'keyId', 'iv', 'ciphertext'])
+        && data.payload.format == 'royal-wallet-e2ee' && data.payload.version == 1
+        && data.payload.keyId == data.encryption.keyId
+        && data.payload.iv is string && data.payload.iv.size() == 16
+        && data.payload.ciphertext is string && data.payload.ciphertext.size() >= 24
+        && data.payload.ciphertext.size() <= 950000;
+    }
+    match /carteiras/{uid} {
+      allow get: if owner(uid);
+      allow list: if false;
+      allow create: if owner(uid) && validWallet(request.resource.data);
+      allow update: if owner(uid) && validWallet(request.resource.data)
+        && (resource.data.get('v', '') != 'e2ee-1'
+          || request.resource.data.encryption.keyId == resource.data.encryption.keyId);
+      allow delete: if owner(uid);
+    }
+  }
+}
