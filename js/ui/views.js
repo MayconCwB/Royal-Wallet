@@ -22,7 +22,7 @@
         const sinal = isRec ? "+" : "-";
         return `
           <tr data-movement-id="${escapeHtml(String(m.id))}">
-            <td>${m.data ? m.data.split('-').reverse().join('/') : '-'}</td>
+            <td>${escapeHtml(m.data ? m.data.split('-').reverse().join('/') : '-')}</td>
             <td><strong>${escapeHtml(m.desc || m.descricao)}</strong></td>
             <td><span class="shell-badge">${escapeHtml(m.cat || m.categoria || 'Geral')}</span></td>
             <td><span style="color:${cor}; font-weight:600;">${isRec ? 'Entrada' : 'Gasto'}</span></td>

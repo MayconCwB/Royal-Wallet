@@ -6,17 +6,21 @@ uma nuvem simulada e não entram em contas nem alteram dados reais.
 Para verificar também a interface, execute `npm ci` e `npm test`. O arquivo
 `app-smoke.cjs` carrega os mesmos scripts da página em um DOM isolado, com rede
 simulada. Ele cobre ativação, desbloqueio offline, recuperação, backup cifrado,
-migração da nuvem legada e abertura em um segundo aparelho simulado.
+migração da nuvem legada, abertura em um segundo aparelho simulado, rejeição de
+HTML em datas importadas, limpeza da interface ao sair/bloquear e diagnóstico
+da conexão sem criação de contas ou gravação de carteiras.
 
 Os testes de regressão verificam os contratos financeiros e de sincronização;
 os casos marcados AES, recuperação, persistência e nuvem cifrada carregam os
 módulos reais de segurança. Os demais usam uma fachada de armazenamento para
 manter os cenários antigos independentes da tela de desbloqueio.
 
-O protótipo de regras foi avaliado com 16 casos sintéticos por
+As regras foram avaliadas com 55 casos sintéticos por
 `scripts/check-rules.cjs`, usando a sessão autenticada do Firebase CLI.
 Esse procedimento usa apenas a API de avaliação de regras, não publica regras
-e não grava documentos. Consulte `docs/SECURITY.md` antes de implantar.
+e não grava documentos. O argumento opcional `--verify-active`, depois do
+diretório `lib` do Firebase CLI, também compara o arquivo local com a publicação
+ativa. Consulte `docs/SECURITY.md` antes de implantar.
 
 `npm run test:browser` usa Chrome/Edge headless com perfil temporário, viewport
 de 390px, sem conexão externa. Verifica Web Crypto nativa, política CSP,

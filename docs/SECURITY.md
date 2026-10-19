@@ -2,7 +2,7 @@
 
 ## Estado e alcance
 
-Esta implementação e as regras são uma proposta para revisão antes da publicação em produção. Nenhuma carteira real foi migrada durante o desenvolvimento. A proteção começa quando cada usuário abre a nova versão, cria a senha da carteira e confirma que guardou a chave de recuperação. Uma implantação de código não significa que todas as contas existentes já tenham sido convertidas.
+O cliente e as regras E2EE foram publicados após autorização do responsável pelo projeto. Nenhuma carteira real foi migrada pelos testes de desenvolvimento. A proteção começa quando cada usuário abre a nova versão, cria a senha da carteira e confirma que guardou a chave de recuperação. Uma implantação de código não significa que todas as contas existentes já tenham sido convertidas. A revisão posterior está registrada em [Revisão de segurança](SECURITY-REVIEW.md).
 
 O Firestore já utiliza criptografia do provedor e HTTPS. A camada nova cifra os dados financeiros no aparelho, antes de enviá-los ao Firestore. Movimentos, valores, descrições, contas, cartões, dívidas, metas, histórico e lixeira ficam dentro do conteúdo cifrado, inclusive nas cópias locais, filas offline e novos backups exportados.
 
@@ -42,11 +42,11 @@ O botão Bloquear remove as chaves e os dados em memória após concluir as grav
 
 ## Regras e publicação
 
-As regras atuais do projeto foram consultadas sem ler carteiras: já restringem o acesso ao UID proprietário. O novo `firestore.rules` é um **protótipo para revisão**: mantém esse isolamento, proíbe listagem de carteiras, valida o envelope em criação e atualização e impede a volta a texto aberto ou a troca silenciosa do identificador da chave. O Firestore não consegue provar que um blob é criptograficamente válido; essa verificação é feita pelo cliente com AES-GCM.
+As regras ativas do projeto foram consultadas sem ler carteiras e conferem com `firestore.rules`: restringem o acesso ao UID proprietário, proíbem listagem de carteiras, validam o envelope em criação e atualização e impedem a volta ao formato em texto aberto ou a troca silenciosa do identificador da chave. O Firestore não consegue provar que um blob é criptograficamente válido; essa verificação é feita pelo cliente com AES-GCM.
 
-O protótipo passou por 16 casos sintéticos usando a API de teste de regras. Não foi publicado e não altera as regras ativas. Revise e verifique as regras antes de distribuir amplamente o aplicativo. Clientes antigos que gravam o formato v2 deixarão de conseguir gravar após a implantação dessas regras.
+As regras publicadas passaram por 55 casos sintéticos usando a API de teste de regras. Essa avaliação não gravou documentos nem alterou as regras ativas. Clientes antigos que gravam o formato v2 não conseguem mais gravar; devem atualizar o aplicativo.
 
-Sequência proposta para aprovação:
+Sequência para futuras publicações:
 
 1. Revisar o código e as regras, rodar `npm ci` e `npm test` e validar em aparelho real com uma conta exclusivamente de teste.
 2. Publicar o cliente completo, incluindo os recursos de `app-assets.json`, pelo GitHub Pages e confirmar a nova versão.

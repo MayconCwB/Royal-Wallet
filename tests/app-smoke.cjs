@@ -126,6 +126,12 @@ async function cloudFlow() {
     assert.equal(writes, 1); assert.equal(document.fields.v.stringValue, 'e2ee-1');
     assert.equal('movimentos' in document.fields, false);
     assert.equal(app.state().data.movimentos[0].desc, 'Compra particular de teste');
+    const diagnosticsStart = app.requests.length;
+    app.$('btnRunDiagnostics').click();
+    await until(() => app.$('diagTestResult').textContent.includes('Sessão válida'), 'Diagnóstico somente de leitura não concluiu.');
+    assert.equal(writes, 1);
+    assert.equal(app.requests.length - diagnosticsStart, 2, 'Diagnóstico faz apenas lookup e leitura.');
+    assert(app.requests.slice(diagnosticsStart).every(url => url.includes('accounts:lookup') || url.includes('/documents/carteiras/A')));
     await app.w.WalletStorage.flush();
     const second = launch(seed, network);
     try {
@@ -138,4 +144,42 @@ async function cloudFlow() {
     console.log('OK: interface migra nuvem legada com precondição e abre a carteira cifrada em outro aparelho simulado.');
   } finally { app.dom.window.close(); }
 }
-(async () => { await localFlow(); await cloudFlow(); })().catch(error => { console.error(error); process.exitCode = 1; });
+async function securityFlow() {
+  const secret = 'Informacao privada que deve desaparecer ao sair';
+  const app = launch({ royalLocalData_device: JSON.stringify(fixture(secret)) });
+  try {
+    await tick(); app.$('btnContinuarLocal').click();
+    await activate(app, 'senha de teste para seguranca');
+    const movement = app.state().data.movimentos[0];
+    movement.data = '<img src="/probe" id="securityProbe">';
+    app.w.renderMovimentos();
+    assert.equal(app.$('securityProbe'), null, 'Data importada não pode criar HTML.');
+    movement.data = '\"><img src="/probe" id="securityProbe">';
+    app.w.openMovimentoForm(movement);
+    assert.equal(app.$('securityProbe'), null, 'Data no formulário não pode escapar do atributo.');
+    app.w.closeModal();
+    movement.data = '2026-10-08';
+    app.w.renderAll();
+    app.w.handleEditMovimento(movement.id);
+    assert.equal(app.$('movDesc').value, secret);
+    app.state().eventsLog.push(secret);
+    app.w.logout();
+    await app.w.WalletStorage.lock();
+    assert(!app.w.document.body.textContent.includes(secret), 'Sair deve remover dados exibidos e logs.');
+    assert.equal(app.$('genericModalBody').childElementCount, 0, 'Sair deve limpar os campos do formulário.');
+    assert.equal(app.$('genericModalBackdrop').classList.contains('active'), false);
+    assert.equal(app.w.WalletStorage.ready('device'), false);
+    app.$('btnContinuarLocal').click(); await unlock(app, 'senha de teste para seguranca');
+    assert.equal(app.state().data.movimentos[0].desc, secret, 'A limpeza da tela preserva o arquivo cifrado.');
+    app.w.handleEditMovimento(movement.id);
+    const lockTask = app.w.WalletPrivacy.lock();
+    await until(() => app.$('vaultPassword'), 'O bloqueio não pediu a senha.');
+    assert(!app.w.document.body.textContent.includes(secret), 'Bloqueio deve limpar os dados exibidos.');
+    assert.equal(app.$('genericModalBody').childElementCount, 0);
+    await unlock(app, 'senha de teste para seguranca'); await lockTask;
+    assert.equal(app.state().data.movimentos[0].desc, secret);
+    assert.deepEqual(app.errors, []);
+    console.log('OK: datas hostis não criam HTML e logout limpa tela, formulário, logs e sessão sem apagar a carteira.');
+  } finally { app.dom.window.close(); }
+}
+(async () => { await securityFlow(); await localFlow(); await cloudFlow(); })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -148,7 +148,7 @@ globalThis.WalletPrivacy = (() => {
     stopRealtimeSync();
     if (AppState.saveQueueTimeout) clearTimeout(AppState.saveQueueTimeout);
     await Promise.allSettled([...saveTasks.values()]); await WalletStorage.lock();
-    AppState.data = emptyWallet(); renderAll();
+    clearWalletView();
     document.getElementById('loginOverlay').style.display = 'flex';
     await prepare();
     const raw = walletStorage.getItem(localDataKey());

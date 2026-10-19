@@ -80,10 +80,12 @@ globalThis.WalletStorage = (() => {
     if (existing && existing.keyId !== session.metadata.keyId) throw Error('Este aparelho tem outra chave. Preserve o backup antes de trocar de carteira.');
     const key = `royalLocalData_${uid}`;
     const protectedRaw = native.getItem(dataKey(uid));
-    const raw = protectedRaw || native.getItem(key);
+    const hasProtected = protectedRaw !== null;
+    const raw = hasProtected ? protectedRaw : native.getItem(key);
     let local = raw ? JSON.parse(raw) : null;
-    if (WalletCrypto.isEnvelope(local)) local = await session.decrypt(local, `local:${protectedRaw ? dataKey(uid) : key}`);
-    const oldRaw = protectedRaw && native.getItem(key);
+    if (hasProtected && !WalletCrypto.isEnvelope(local)) throw Error('O arquivo protegido não está no formato criptografado. A cópia foi preservada.');
+    if (WalletCrypto.isEnvelope(local)) local = await session.decrypt(local, `local:${hasProtected ? dataKey(uid) : key}`);
+    const oldRaw = hasProtected && native.getItem(key);
     if (oldRaw) {
       const oldData = JSON.parse(oldRaw);
       if (Number(oldData.updatedAt || 0) > Number(local?.updatedAt || 0)) throw Error('Uma versão antiga do aplicativo gravou alterações neste aparelho. As duas cópias foram preservadas; feche a versão antiga e recupere o backup antes de continuar.');
