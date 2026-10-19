@@ -1,0 +1,20 @@
+{
+  "score": 5,
+  "summary": "Na revisão das regras Firestore deste projeto, não foi encontrado desvio de autorização ou validação nos casos avaliados. A fonte ativa confere com firestore.rules; 55 testes sintéticos passaram. A nota se restringe ao checklist de regras e não certifica a segurança do aplicativo ou da criptografia.",
+  "findings": [],
+  "scope": "carteiras/{uid}, banco padrão do projeto minha-carteira-app-7b58d",
+  "checks": {
+    "createUpdateParity": "Mesmo validador de documento completo em criação e atualização.",
+    "authoritySource": "request.auth.uid validado contra o UID do caminho; nenhum papel fornecido pelo cliente concede autoridade.",
+    "businessLogic": "Leitura legada pelo dono permite migração; escrita exige formato E2EE; atualização preserva keyId; exclusão pelo dono é intencional.",
+    "resourceLimits": "Limites de tamanho nos campos de envelope, encapsulamentos, salt e identificador; conteúdo limitado a 950000 caracteres.",
+    "typeSafety": "Mapas, strings, horário inteiro e estruturas obrigatórias verificados.",
+    "identityIsolation": "Dono para get/create/update/delete; listagem e demais caminhos negados."
+  },
+  "limitations": [
+    "Regras validam a estrutura; não comprovam criptografia ou integridade de ciphertext. O cliente autentica os dados com AES-GCM.",
+    "Admin SDK e credenciais administrativas não são limitados por essas regras.",
+    "Não houve leitura de carteiras, tentativa em conta de outra pessoa, inventário de IAM ou alteração das regras durante a revisão.",
+    "Não se trata de auditoria independente ou certificação."
+  ]
+}

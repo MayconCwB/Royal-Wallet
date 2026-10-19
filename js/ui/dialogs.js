@@ -49,6 +49,8 @@
     function closeModal() {
       if (cancelConflict) { cancelConflict(); return; }
       document.getElementById('genericModalBackdrop').classList.remove('active');
+      document.getElementById('genericModalBody').textContent = '';
+      document.getElementById('genericModalFooter').textContent = '';
     }
 
     /* ===== 4) CÁLCULOS DO PLANEJAMENTO E RESUMO (CAMPOS MAPEADOS) ===== */

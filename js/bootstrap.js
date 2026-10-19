@@ -100,37 +100,22 @@
         }
       });
 
-      // Cloud Diagnostics Test
+      // Diagnóstico somente de leitura: nunca cria contas nem altera carteiras.
       document.getElementById('btnRunDiagnostics').addEventListener('click', async () => {
         const diagEl = document.getElementById('diagTestResult');
-        diagEl.textContent = "Testando escrita e leitura estruturada REST...";
+        if (AppState.isLocal || !AppState.user || !WalletPrivacy.ready()) {
+          diagEl.textContent = 'Entre e desbloqueie sua carteira para verificar a conexão.';
+          return;
+        }
+        const user = { ...AppState.user };
+        diagEl.textContent = 'Verificando sessão e leitura da carteira...';
         try {
-          const ts = Date.now();
-          const testEmail = `teste_${ts}@exemplo.com`;
-          const sRes = await mcSignup(testEmail, "senhaTeste123", "Diagnostico");
-          if (sRes?.localId) {
-            // Teste real de escrita no formato estruturado (v2)
-            const testPayload = {
-              movimentos: [{ id: "test_m1", tipo: "receita", descricao: "Teste Diagnóstico", valor: 150, data: "2025-01-01", categoria: "Geral" }],
-              recorrentes: [],
-              parcelas: [],
-              dividas: [],
-              metas: [],
-              historico: [],
-              updatedAt: ts
-            };
-            await mcSaveDoc(sRes.localId, sRes.idToken, testPayload, { diagnostic: true });
-            const loaded = await mcLoadDoc(sRes.localId, sRes.idToken);
-            await mcDeleteAccount(sRes.idToken, sRes.localId);
-
-            if (loaded && loaded.movimentos && loaded.movimentos.length > 0) {
-              logEvent("Gravação estruturada (v2) confirmada");
-              diagEl.textContent = "✅ Gravação estruturada (v2) confirmada!";
-            } else {
-              diagEl.textContent = "✅ REST Conectado (leitura concluída)";
-            }
-            logEvent("Teste REST concluído com sucesso (signup + save v2 + load v2 + delete).");
-          }
+          const identity = await mcLookup(user.idToken);
+          if (identity.localId !== user.uid) throw Error('A sessão não corresponde à conta.');
+          const loaded = await mcLoadDoc(user.uid, user.idToken);
+          if (AppState.user?.uid !== user.uid || !WalletPrivacy.ready()) return;
+          diagEl.textContent = loaded ? '✅ Sessão válida e leitura da carteira verificada.' : '✅ Sessão válida. Carteira ainda não encontrada na nuvem.';
+          logEvent('Diagnóstico de leitura concluído sem alterar contas ou carteiras.');
         } catch (err) {
           diagEl.textContent = "❌ Falha: " + err.message;
           logEvent("Falha no teste diagnóstico: " + err.message);

@@ -18,7 +18,7 @@ function setup({ secure = false } = {}) {
     console, navigator: { onLine: true }, setTimeout, clearTimeout, AbortController,
     TextEncoder, TextDecoder, btoa, atob, crypto: webcrypto,
     window: {}, document: {
-      addEventListener() {},
+      addEventListener() {}, querySelectorAll: () => [],
       getElementById(id) {
         if (!elements.has(id)) {
           const classes = new Set();
@@ -377,7 +377,7 @@ test('Service Worker remove apenas caches próprios e preserva HTML em caso de e
     URL, setTimeout, clearTimeout, Response,
     self: { addEventListener: (name, handler) => { handlers[name] = handler; },
       clients: { claim: async () => {} }, location: { origin: 'https://wallet.example' } },
-      caches: { keys: async () => ['royal-wallet-shell-v1', 'royal-wallet-shell-v6', 'other-app'], match: async () => undefined,
+      caches: { keys: async () => ['royal-wallet-shell-v1', 'royal-wallet-shell-v6', 'royal-wallet-shell-v7', 'other-app'], match: async () => undefined,
       delete: async key => removed.push(key), open: async () => ({ put: async () => stored++ }) },
     fetch: async () => ({ ok: false, status: 503 })
   });
@@ -385,7 +385,7 @@ test('Service Worker remove apenas caches próprios e preserva HTML em caso de e
   let activation;
   handlers.activate({ waitUntil: task => { activation = task; } });
   await activation;
-  assert.deepEqual(removed, ['royal-wallet-shell-v1']);
+  assert.deepEqual(removed, ['royal-wallet-shell-v1', 'royal-wallet-shell-v6']);
   let response;
   handlers.fetch({ request: { method: 'GET', mode: 'navigate', url: 'https://wallet.example/' },
     respondWith: task => { response = task; }, waitUntil() {} });
@@ -717,6 +717,19 @@ test('Depois da ativação a nuvem não pode voltar ao formato sem criptografia'
   mock(async () => cloudResponse(wallet(500)));
   await assert.rejects(api.mcLoadDoc('A', 'token'), /formato recebido não é confiável/);
 });
+test('Armazenamento protegido adulterado em texto aberto é rejeitado sem substituição', async () => {
+  const { context, storage, wallet } = setup({ secure: true });
+  const { session } = await context.WalletCrypto.create('A', 'senha longa de teste privado');
+  await context.WalletStorage.unlock('A', session);
+  await context.WalletStorage.lock();
+  for (const tampered of [JSON.stringify(wallet(200, 'Conteudo adulterado em claro')), '', 'null', '{}']) {
+    storage.set('royalVaultData_A', tampered);
+    await assert.rejects(context.WalletStorage.unlock('A', session), /criptografado|protegid/);
+    assert.equal(storage.get('royalVaultData_A'), tampered);
+    assert.equal(context.WalletStorage.ready('A'), false);
+  }
+});
+
 test('Cache offline inclui todos os scripts, estilos e imagens separados', async () => {
   const assets = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'app-assets.json'), 'utf8'));
   const refs = [...html.matchAll(/(?:src|href)="\.\/([^"]+)"/g)].map(match => match[1]);

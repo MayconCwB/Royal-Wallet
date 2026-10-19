@@ -198,6 +198,20 @@
       startRealtimeSync(credentials);
     }
 
+    function clearWalletView() {
+      if (cancelConflict) cancelConflict();
+      closeModal();
+      closeDrawer();
+      AppState.data = emptyWallet();
+      AppState.eventsLog = [];
+      renderAll();
+      document.getElementById('eventLogBox').textContent = '';
+      for (const id of ['headerUser', 'cfgEmailText', 'diagDocPath', 'diagSessionStatus']) {
+        document.getElementById(id).textContent = '';
+      }
+      document.querySelectorAll('#appMain input, #appMain textarea').forEach(input => { input.value = ''; });
+    }
+
     function logout() {
       WalletPrivacy.endSession();
       stopRealtimeSync();
@@ -205,7 +219,7 @@
       if (AppState.saveQueueTimeout) clearTimeout(AppState.saveQueueTimeout);
       if (cancelConflict) cancelConflict();
       cloudSyncTask = null;
-      AppState.data = emptyWallet();
+      clearWalletView();
       clearUserSession();
       AppState.user = null;
       AppState.isLocal = false;

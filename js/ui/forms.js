@@ -51,7 +51,7 @@
         ${generateQuickValHtml({ id: 'movFormValor', label: 'Valor (R$):', value: valInitial, defaultStep: 10, placeholder: '0,00' })}
         <div class="form-group">
           <label>Data:</label>
-          <input type="date" id="movFormData" class="input-field" value="${editing ? editing.data : new Date().toISOString().split('T')[0]}">
+          <input type="date" id="movFormData" class="input-field" value="${escapeHtml(editing ? editing.data : new Date().toISOString().split('T')[0])}">
         </div>
         <div class="form-group">
           <label>Categoria:</label>
