@@ -249,7 +249,7 @@
         </div>
         ${generateQuickValHtml({ id: 'parcFormVal', label: 'Valor de CADA Parcela (R$):', value: '', defaultStep: 10, placeholder: '0,00' })}
         <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
-          ${generateIntStepperHtml({ id: 'parcFormTotal', label: 'Total Parcelas:', value: 10, min: 1, max: 120, step: 1 })}
+          ${generateIntStepperHtml({ id: 'parcFormTotal', label: 'Total Parcelas:', value: 10, min: 1, max: Number.MAX_SAFE_INTEGER, step: 1 })}
           ${generateIntStepperHtml({ id: 'parcFormPagas', label: 'Já Pagas:', value: 0, min: 0, max: 10, step: 1 })}
         </div>
         <div class="form-group">

@@ -242,15 +242,7 @@
         if (confirm("ATENÇÃO: Todos os lançamentos, dívidas, metas e contas serão zerados. Deseja prosseguir?")) {
           const nowTs = Math.max(Date.now(), Number(AppState.data.updatedAt || 0) + 1);
           walletStorage.setItem(`royalApagadoEm_${AppState.isLocal ? 'device' : AppState.user.uid}`, String(nowTs));
-          AppState.data = {
-            movimentos: [],
-            recorrentes: [],
-            parcelas: [],
-            dividas: [],
-            metas: [],
-            historico: [],
-            updatedAt: nowTs
-          };
+          AppState.data = { ...emptyWallet(), updatedAt: nowTs };
           walletStorage.setItem(localDataKey(), JSON.stringify(AppState.data));
 
           if (!AppState.isLocal && AppState.user) {
@@ -302,15 +294,7 @@
         };
         await WalletPrivacy.prepare(AppState.user);
         const raw = walletStorage.getItem(localDataKey());
-        AppState.data = raw ? normalizeDataStructure(JSON.parse(raw), "v2 estruturado (local)") : {
-          movimentos: [],
-          recorrentes: [],
-          parcelas: [],
-          dividas: [],
-          metas: [],
-          historico: [],
-          updatedAt: Date.now()
-        };
+        AppState.data = raw ? normalizeDataStructure(JSON.parse(raw), "v2 estruturado (local)") : emptyWallet();
         enterApp();
         logEvent("Iniciado no modo local.");
         } catch (error) { setAuthError(error.message); }

@@ -110,7 +110,7 @@
     const owner = identity();
     openModal(title, html, [{ label: 'Cancelar', onClick: closeModal }, { label: 'Salvar', primary: true, onClick: () => {
       try {
-        if (identity() !== owner) throw new Error('A conta ativa mudou. Abra o formulário novamente.');
+        if (!WalletPrivacy.ready() || identity() !== owner) throw new Error('A sessão mudou. Abra o formulário novamente.');
         save(); commit(); closeModal(); showToast('Salvo com sucesso.');
       } catch (error) { alert(error.message); }
     } }]);
@@ -133,9 +133,9 @@
     const name = recurrent ? 'Conta fixa' : installment ? 'Compra parcelada' : 'Dívida';
     let html = field('editNome', recurrent ? 'Nome da conta fixa' : installment ? 'Descrição da compra' : 'Credor / descrição', item.desc || item.descricao || item.nome || item.credor || '');
     html += moneyField('editValor', recurrent ? 'Valor mensal (R$)' : installment ? 'Valor de cada parcela (R$)' : 'Valor total (R$)', item.valor ?? item.total ?? '');
-    if (recurrent) html += field('editDia', 'Dia do vencimento', item.dia || 10, 'number', 'min="1" max="31" step="1"') + choice('editCat', 'Categoria', categoryChoices(item.cat), item.cat || 'Contas');
+    if (recurrent) html += field('editDia', 'Dia do vencimento', item.dia || 10, 'number', 'min="1" max="31" step="1"') + choice('editCat', 'Categoria', categoryChoices(item.cat), item.cat || 'Contas') + `<label class="wallet-check"><input id="editAssinatura" type="checkbox" ${item.assinatura ? 'checked' : ''}> É uma assinatura de serviço (ex.: streaming)</label>`;
     else {
-      if (installment) html += field('editTotal', 'Quantidade de parcelas', item.total || 10, 'number', 'min="1" max="120" step="1"') + field('editPagas', 'Parcelas já pagas', item.pagas || 0, 'number', 'min="0" step="1"');
+      if (installment) html += field('editTotal', 'Quantidade de parcelas', item.total || 10, 'number', 'min="1" step="1"') + field('editPagas', 'Parcelas já pagas', item.pagas || 0, 'number', 'min="0" step="1"');
       else html += moneyField('editPago', 'Valor já pago (R$)', item.pago || 0);
       html += field('editData', installment ? 'Data da primeira parcela' : 'Vencimento', item.data1 || item.venc || dateISO(), 'date');
     }
@@ -146,17 +146,20 @@
       if (recurrent) {
         const dia = Number(value('editDia')), cat = value('editCat');
         if (!Number.isInteger(dia) || dia < 1 || dia > 31) throw new Error('O dia deve ser de 1 a 31.');
-        Object.assign(values, { nome: desc, valor: amount(valor), dia, cat, categoria: cat, tipo: item.tipo || 'despesa', ultimoMesPago: item.ultimoMesPago || '', pagoNesteMes: !!item.pagoNesteMes });
+        Object.assign(values, { nome: desc, valor: amount(valor), dia, cat, categoria: cat, tipo: item.tipo || 'despesa', ultimoMesPago: item.ultimoMesPago || '', pagoNesteMes: !!item.pagoNesteMes, assinatura: document.getElementById('editAssinatura').checked });
       } else {
         const date = parseCsvDate(value('editData'));
         if (!date) throw new Error('Informe uma data válida.');
         if (installment) {
           const total = Number(value('editTotal')), pagas = Number(value('editPagas'));
-          if (!Number.isInteger(total) || total < 1 || total > 120 || !Number.isInteger(pagas) || pagas < 0 || pagas > total) throw new Error('Confira a quantidade de parcelas e quantas já foram pagas.');
+          if (!Number.isSafeInteger(total) || total < 1 || !Number.isSafeInteger(pagas) || pagas < 0 || pagas > total) throw new Error('Confira a quantidade de parcelas e quantas já foram pagas.');
+          if ((total > 120 || valor > 5000) && (!existing || total !== item.total || amount(valor) !== item.valor) && !confirm(`Confira: ${total} parcelas de ${fmtBRL(valor)} cada. Está correto?`)) throw new Error('Confirmação cancelada. Revise a quantidade e o valor.');
+          if (existing && pagas !== item.pagas && AppState.data.movimentos.some(m => m.origem?.startsWith(`parcela:${id}:`))) throw new Error('Altere as parcelas pagas pelos botões + e − da lista para manter os gastos correspondentes.');
           Object.assign(values, { valor: amount(valor), valorParcela: amount(valor), total, pagas, data1: date, dataPrimeira: date, cat: item.cat || 'Geral', categoria: item.cat || 'Geral' });
         } else {
           const pago = number('editPago');
           if (!Number.isFinite(pago) || pago < 0 || pago > valor) throw new Error('O valor já pago deve estar entre zero e o total da dívida.');
+          if (existing && amount(pago) !== item.pago && AppState.data.movimentos.some(m => m.origem === `divida:${id}`)) throw new Error('Use Registrar pagamento para atualizar a dívida e o gasto juntos.');
           Object.assign(values, { credor: desc, total: amount(valor), valorTotal: amount(valor), pago: amount(pago), valorPago: amount(pago), venc: date, dataVencimento: date });
         }
       }
@@ -174,6 +177,7 @@
     ensureData();
     const index = AppState.data[collection].findIndex(x => x.id === id);
     if (index < 0) return null;
+    if (collection === 'movimentos' && /^(fixa|parcela|divida):/.test(AppState.data.movimentos[index].origem || '')) throw new Error('Corrija este pagamento no compromisso de origem para manter o saldo consistente.');
     if (['contas', 'cartoes'].includes(collection)) {
       const key = collection === 'contas' ? 'contaId' : 'cartaoId';
       if (AppState.data.movimentos.some(m => m[key] === id) || AppState.data.lixeira.some(x => x.item?.[key] === id)) throw new Error('Há lançamentos vinculados a este item. Remova ou altere esses vínculos antes de excluí-lo.');
@@ -188,6 +192,7 @@
     const entry = AppState.data.lixeira.find(x => x.id === id);
     if (!entry) throw new Error('O item já foi restaurado ou não está mais na lixeira.');
     if (AppState.data[entry.colecao].some(x => x.id === entry.item.id)) throw new Error('Já existe um item com esse identificador. Nenhum dado foi substituído.');
+    if (entry.colecao === 'movimentos' && /^(renda|fixa|parcela):/.test(entry.item.origem || '') && AppState.data.movimentos.some(x => x.origem === entry.item.origem)) throw new Error('Este recebimento ou pagamento já foi registrado novamente. A restauração duplicaria o saldo.');
     AppState.data[entry.colecao].splice(Math.min(entry.indice || 0, AppState.data[entry.colecao].length), 0, entry.item);
     AppState.data.lixeira = AppState.data.lixeira.filter(x => x.id !== id);
   }
@@ -229,6 +234,7 @@
 
   openMovimentoForm = (editing = null) => {
     ensureData();
+    if (/^(fixa|parcela|divida):/.test(editing?.origem || '')) return alert('Corrija este pagamento no compromisso de origem.');
     if (editing?.classe === 'pagamento_fatura') return alert('Para corrigir um pagamento de fatura, exclua-o e registre o pagamento correto. A exclusão pode ser desfeita.');
     const card = editing?.cartaoId || '';
     const html = choice('movTipo', 'Tipo', [['despesa', 'Gasto'], ['receita', 'Entrada']], editing?.tipo || 'despesa') +
@@ -301,7 +307,7 @@
         `<tr><td><input type="checkbox" id="csvPick${i}" aria-label="Importar linha ${i + 1}" ${item.possibleDuplicate ? '' : 'checked'}></td><td>${esc(item.data)}<br><strong>${esc(item.desc)}</strong>${item.possibleDuplicate ? '<br><span class="wallet-muted">Possível duplicata — confira</span>' : ''}</td><td><select id="csvCat${i}" class="input-field" aria-label="Categoria da linha ${i + 1}">${categoryChoices(item.cat).map(([key]) => `<option ${key === item.cat ? 'selected' : ''}>${esc(key)}</option>`).join('')}</select></td><td>${item.tipo === 'receita' ? '+' : '-'} ${fmtBRL(item.valor)}</td></tr>`).join('')}</tbody></table></div></div>`;
     const selected = () => selectedCsvItems(items, items.map((_, i) => ({ selected: document.getElementById(`csvPick${i}`).checked, category: value(`csvCat${i}`) })), value('csvConta'));
     openModal('Revisar importação CSV', html, [{ label: 'Cancelar', onClick: closeModal }, { label: 'Importar selecionadas', primary: true, onClick: () => {
-      if (identity() !== owner) return alert('A conta ativa mudou. Abra o arquivo novamente.');
+      if (!WalletPrivacy.ready() || identity() !== owner) return alert('A sessão mudou. Abra o arquivo novamente.');
       const picked = selected();
       if (!picked.length) return alert('Selecione pelo menos uma linha.');
       AppState.data.movimentos.push(...picked); commit(); closeModal(); showToast(`${picked.length} movimentações importadas.`);

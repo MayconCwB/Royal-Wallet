@@ -191,9 +191,11 @@
     }
 
     function importCsvFile(file) {
+      const owner = localDataKey();
+      if (!WalletPrivacy.ready() || file.size > 5 * 1024 * 1024) return alert("Desbloqueie a carteira e use um arquivo de até 5 MB.");
       const reader = new FileReader();
       reader.onload = () => {
-        try { openCsvPreview(prepareCsvImport(reader.result, { includeDuplicates: true })); }
+        try { if (!WalletPrivacy.ready() || localDataKey() !== owner) return; openCsvPreview(prepareCsvImport(reader.result, { includeDuplicates: true })); }
         catch (err) { alert('Não foi possível importar o CSV: ' + err.message); }
       };
       reader.onerror = () => alert('Não foi possível ler o arquivo CSV.');

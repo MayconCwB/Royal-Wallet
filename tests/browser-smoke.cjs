@@ -48,7 +48,7 @@ async function main() {
     await page.locator('#vaultRecoverySaved').check(); await page.locator('#vaultContinue').click();
     await page.waitForFunction(() => !document.querySelector('.vault-overlay') && document.getElementById('loginOverlay').style.display === 'none');
     await page.locator('#btnMenu').click(); await page.locator('[data-tab="movimentos"]').click();
-    await page.locator('#btnNovoMovimento').click();
+    await page.getByRole('button', { name: 'Gastei', exact: true }).click();
     await page.locator('#movDesc').fill('Gasto confidencial de teste'); await page.locator('#movValor').fill('23,45');
     await page.getByRole('button', { name: 'Salvar', exact: true }).click();
     await page.waitForFunction(() => !WalletStorage.hasPending());
