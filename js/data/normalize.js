@@ -69,6 +69,7 @@
 
       // Último dia do mês alvo
       const maxDays = new Date(targetYear, targetMonth + 1, 0).getDate();
+      if (!Number.isFinite(maxDays)) return null;
       const targetDay = Math.min(d, maxDays);
 
       const mmStr = String(targetMonth + 1).padStart(2, '0');

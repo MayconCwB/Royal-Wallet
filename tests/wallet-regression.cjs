@@ -385,7 +385,7 @@ test('Service Worker remove apenas caches próprios e preserva HTML em caso de e
   let activation;
   handlers.activate({ waitUntil: task => { activation = task; } });
   await activation;
-  assert.deepEqual(removed, ['royal-wallet-shell-v1', 'royal-wallet-shell-v6']);
+  assert.deepEqual(removed, ['royal-wallet-shell-v1', 'royal-wallet-shell-v6', 'royal-wallet-shell-v7']);
   let response;
   handlers.fetch({ request: { method: 'GET', mode: 'navigate', url: 'https://wallet.example/' },
     respondWith: task => { response = task; }, waitUntil() {} });

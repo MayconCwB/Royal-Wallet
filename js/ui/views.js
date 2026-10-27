@@ -295,10 +295,12 @@
           const valor = Number(p.valor || p.valorParcela) || 0;
           if (pagas >= total || !p.data1 || valor <= 0) return;
 
-          // Verifica cada parcela restante e coloca somente as que pertencem a este mês.
-          for (let numero = pagas; numero < total; numero++) {
+          // Cada compra tem no máximo uma parcela por mês; calcula o índice diretamente.
+          const [firstYear, firstMonth] = p.data1.split('-').map(Number);
+          const numero = (year - firstYear) * 12 + month - (firstMonth - 1);
+          if (numero >= pagas && numero < total) {
             const nextDate = getNextParcelaDate(p.data1, numero);
-            if (!nextDate || nextDate.year !== year || nextDate.month !== month) continue;
+            if (!nextDate || nextDate.year !== year || nextDate.month !== month) return;
             if (!daysMap[nextDate.day]) daysMap[nextDate.day] = [];
             daysMap[nextDate.day].push({
               tipo: 'Parcela',

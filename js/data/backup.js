@@ -14,7 +14,10 @@
         historico: AppState.data.historico || [],
         contas: AppState.data.contas || [],
         cartoes: AppState.data.cartoes || [],
-        lixeira: AppState.data.lixeira || []
+        lixeira: AppState.data.lixeira || [],
+        orcamentos: AppState.data.orcamentos || [],
+        rendasPrevistas: AppState.data.rendasPrevistas || [],
+        avisosAtivos: AppState.data.avisosAtivos === true
       };
       await WalletPrivacy.exportBackup(structuredExport);
       showToast('Download do backup criptografado iniciado.');
@@ -22,13 +25,14 @@
     }
 
     function importBackupJson(file) {
+      const importOwner = localDataKey();
       const reader = new FileReader();
       reader.onload = async (e) => {
         try {
-          const importOwner = localDataKey();
+          if (!WalletPrivacy.ready() || localDataKey() !== importOwner) throw Error('A sessão mudou durante a leitura do arquivo.');
           let imported = JSON.parse(e.target.result);
           if (imported.format === 'royal-wallet-encrypted-backup') imported = await WalletPrivacy.importBackup(imported);
-          if (localDataKey() !== importOwner) throw Error('A conta ativa mudou durante a importação.');
+          if (!WalletPrivacy.ready() || localDataKey() !== importOwner) throw Error('A sessão mudou durante a importação.');
           let label = "v2 estruturado (arquivo)";
           // Compatibilidade: se o arquivo JSON contiver campo "dados" ou "payload" em string (v1)
           if (imported && typeof imported.dados === 'string') {

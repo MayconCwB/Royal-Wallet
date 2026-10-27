@@ -69,8 +69,10 @@ async function localFlow() {
     assert.equal(app.w.document.querySelectorAll('.vault-overlay').length, 0);
     app.state().data.movimentos[0].id = 'id\'\");alert(1);//';
     app.w.renderAll();
-    const edit = app.w.document.querySelector('[data-action="handleEditMovimento"]');
+    app.w.document.getElementById('walletMovementAll').checked = true; app.w.renderAll();
+    const edit = app.w.document.querySelector('[data-movement-id]');
     assert.equal(edit.getAttribute('onclick'), null); edit.click();
+    [...app.$('genericModalFooter').querySelectorAll('button')].find(button => button.textContent === 'Editar').click();
     assert.equal(app.$('movDesc').value, privateText); app.w.closeModal();
     app.w.switchTab('movimentos'); app.$('btnNovoMovimento').click();
     app.$('movDesc').value = 'Novo registro privado'; app.$('movValor').value = '12,35'; app.$('movData').value = '2026-10-19';
@@ -182,4 +184,66 @@ async function securityFlow() {
     console.log('OK: datas hostis não criam HTML e logout limpa tela, formulário, logs e sessão sem apagar a carteira.');
   } finally { app.dom.window.close(); }
 }
-(async () => { await securityFlow(); await localFlow(); await cloudFlow(); })().catch(error => { console.error(error); process.exitCode = 1; });
+async function approvedFeaturesFlow() {
+  const app = launch();
+  const click = text => {
+    const button = [...app.$('genericModalFooter').querySelectorAll('button')].find(b => b.textContent === text);
+    assert(button, `Botão ${text} disponível`); button.click();
+  };
+  try {
+    await tick(); app.$('btnContinuarLocal').click(); await activate(app, 'senha longa dos recursos novos');
+    const { w } = app, data = app.state().data;
+    const today = new Date(), month = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}`, date = month+'-01';
+    assert.equal(data.movimentos.length, 0); assert.equal(data.rendasPrevistas.length, 0);
+    assert.equal(app.$('walletPendingIncome').hidden, true);
+    assert.equal(w.document.querySelector('[data-tab="contascartoes"]'), null);
+    assert(!/Royal Pro|Comparar planos|Meu plano|Essencial/.test(w.document.body.textContent));
+    w.WalletExperience.configureIncome();
+    app.$('incomeAmount0').value='2000'; app.$('incomeDay0').value='5';
+    app.$('incomeAmount1').value='800'; app.$('incomeDay1').value='20'; click('Salvar');
+    assert.equal(w.WalletExperience.pending(), 2800);
+    assert.equal(w.calcMonthlyFinancials().saldoReal, 0); assert.equal(w.calcMonthlyFinancials().saldoPrevisto, 2800);
+    // Vincular uma entrada existente evita duplicar salário importado.
+    data.movimentos.push({ id:'salary-existing', tipo:'receita', desc:'Salário importado', valor:2000, data:date, cat:'Salário' }); w.renderAll();
+    app.$('walletPendingIncome').querySelector('button').click(); [...app.$('genericModalFooter').querySelectorAll('button')].find(b=>b.textContent.startsWith('Salário · ')).click();
+    app.$('incomeExisting').value='salary-existing'; click('Confirmar entrada');
+    assert.equal(data.movimentos.length,1); assert.equal(w.WalletExperience.pending(),800);
+    assert.equal(w.calcMonthlyFinancials().saldoPrevisto,2800);
+    app.$('walletPendingIncome').querySelector('button').click(); if(app.$('incomeExisting'))app.$('incomeExisting').value='new'; click('Confirmar entrada');
+    assert.equal(data.movimentos.length,2); assert.equal(w.WalletExperience.pending(),0); assert.equal(app.$('walletPendingIncome').hidden,true);
+    // Referências de mês antigo não confirmam o recebimento do mês novo.
+    const income=data.rendasPrevistas[0], entry=data.movimentos.find(x=>x.id==='salary-existing'), originalSource=entry.origem;
+    entry.origem=`renda:${income.id}:2001-01`; assert.equal(w.WalletExperience.received(income),false);entry.origem=originalSource;
+    data.recorrentes.push({id:'rent',desc:'Aluguel de teste',valor:700,dia:10,tipo:'despesa',cat:'Moradia'});
+    w.handleToggleRecorrentePago('rent'); assert.equal(w.calcMonthlyFinancials().saldoReal,2100);
+    assert.equal(w.calcMonthlyFinancials().compromissosMes,0);
+    w.handleToggleRecorrentePago('rent'); assert.equal(w.calcMonthlyFinancials().saldoReal,2800);
+    w.handleToggleRecorrentePago('rent'); assert.equal(data.movimentos.filter(x=>x.origem===`fixa:rent:${month}`).length,1);
+    // Mês anterior pago volta a ficar pendente e gera uma saída atual só uma vez.
+    data.recorrentes[0].ultimoMesPago='2001-01'; w.handleToggleRecorrentePago('rent');
+    assert.equal(data.movimentos.filter(x=>x.origem===`fixa:rent:${month}`).length,1);
+    w.openParcelaForm();app.$('editNome').value='Compra longa';app.$('editValor').value='10';app.$('editTotal').value='1000000';app.$('editPagas').value='0';app.$('editData').value=date;
+    assert.equal(app.$('editTotal').hasAttribute('max'),false);click('Salvar');
+    const installment=data.parcelas[0]; assert.equal(installment.total,1000000);
+    w.handleAdjustParcelasPagas(installment.id,1);assert.equal(w.calcMonthlyFinancials().saldoReal,2090);
+    w.handleAdjustParcelasPagas(installment.id,-1);assert.equal(w.calcMonthlyFinancials().saldoReal,2100);
+    w.WalletBudgets.save({mes:month,categoria:'Moradia',limite:800});
+    assert.equal(w.WalletBudgets.summarize(data,month).rows[0].gasto,700);
+    const ofx='<OFX><BANKID>123<ACCTID>conta-teste<STMTTRN><DTPOSTED>'+month.replace('-','')+'02<TRNAMT>-12.35<FITID>abc<NAME>Mercado de teste</STMTTRN></OFX>';
+    const parsed=w.WalletExperience.parseOfx(ofx);assert.equal(parsed[0].valor,12.35);
+    w.WalletExperience.importOfx(ofx);click('Importar selecionados');
+    w.WalletExperience.importOfx(ofx);assert.equal(app.$('ofxPick0').disabled,true);click('Importar selecionados');
+    assert.equal(data.movimentos.filter(x=>x.id===parsed[0].id).length,1);
+    const normalized=w.normalizeDataStructure(data,'test');assert.equal(normalized.rendasPrevistas.length,2);assert.equal(normalized.orcamentos.length,1);
+    data.recorrentes[0].assinatura=true;assert.equal(w.normalizeDataStructure(data,'test').recorrentes[0].assinatura,true);
+    await w.exportBackupJson();
+    const rawBackup=await new Promise(resolve=>{const reader=new w.FileReader();reader.onload=()=>resolve(reader.result);reader.readAsText(w.lastDownload);});
+    assert(!rawBackup.includes('rendasPrevistas'));const restored=await w.WalletPrivacy.importBackup(JSON.parse(rawBackup));
+    assert.equal(restored.rendasPrevistas.length,2);assert.equal(restored.orcamentos.length,1);assert.equal(restored.recorrentes[0].assinatura,true);
+    await w.WalletStorage.flush();w.logout();await w.WalletStorage.lock();app.$('btnContinuarLocal').click();await unlock(app,'senha longa dos recursos novos');
+    assert.equal(app.state().data.rendasPrevistas.length,2);assert.equal(app.state().data.orcamentos.length,1);
+    assert.deepEqual(app.errors,[]);
+    console.log('OK: salário/vale sem duplicação, pagamentos reversíveis, milhão de parcelas sem travar, limites, OFX sem reimportação e backup cifrado dos novos recursos.');
+  } finally { app.dom.window.close(); }
+}
+(async () => { await approvedFeaturesFlow(); await securityFlow(); await localFlow(); await cloudFlow(); })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -9,7 +9,12 @@ Controle financeiro pessoal em PT-BR, com contas individuais no Firebase e modo 
 - Edição de contas fixas, parcelas e dívidas, preservando pagamentos anteriores.
 - Exclusões recuperáveis pela lixeira e botão Desfazer.
 - CSV com seleção de linhas, edição de categorias e indicação de possíveis duplicatas.
-- Contas, cartões e faturas. A compra conta como gasto; o pagamento da fatura reduz o saldo sem duplicar a despesa.
+- Entradas e gastos em lista mensal, com filtros e importação CSV/OFX em Mais opções.
+- Salário e vale previstos nas Configurações; confirmação do recebimento sem duplicar entradas existentes.
+- Parcelamentos sem o antigo limite de 120; quantidades acima de 120 ou parcelas acima de R$ 5.000 exigem confirmação.
+- Pagamentos de compromissos geram o gasto correspondente; reversão de contas fixas e parcelas atualiza o saldo.
+- Limites por categoria, simulação de compra, relatório mensal para impressão e lembretes dentro do aplicativo.
+- A área de contas e cartões saiu do menu. Registros anteriores continuam acessíveis nas Configurações para preservar saldos e faturas.
 - Comparação com o mês anterior e indicação de compromissos vencidos.
 
 ## Testar
