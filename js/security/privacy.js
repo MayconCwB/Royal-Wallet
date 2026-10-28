@@ -105,7 +105,9 @@ globalThis.WalletPrivacy = (() => {
       active(uid);
       await WalletStorage.unlock(uid, result.session);
       active(uid);
-      try{const remembered=await WalletDeviceSession.remember(uid,result.session);if(!remembered&&globalThis.indexedDB)showToast('Não foi possível manter o acesso neste navegador. A senha continua disponível.');}catch(_){showToast('Não foi possível manter o acesso neste navegador. A senha continua disponível.');}
+      let remembered=false;
+      try{remembered=await WalletDeviceSession.remember(uid,result.session);if(!remembered&&globalThis.indexedDB)showToast('Não foi possível manter o acesso neste navegador. A senha continua disponível.');}catch(_){showToast('Não foi possível manter o acesso neste navegador. A senha continua disponível.');}
+      const accessStatus=document.getElementById('deviceSessionStatus');if(accessStatus)accessStatus.textContent=remembered?'Acesso salvo neste navegador: pode fechar e reabrir o app conectado.':'Este navegador não confirmou o acesso salvo. A senha será necessária ao reabrir.';
       active(uid);
       if (uid !== 'device' && (legacyCloud || result.changed || pendingMetadata)) {
         migration.add(uid); walletStorage.setItem(`royalVaultMetadataPending_${uid}`, '1');
@@ -182,6 +184,7 @@ globalThis.WalletPrivacy = (() => {
     const button = document.createElement('button'); button.className = 'btn btn-outline'; button.textContent = 'Bloquear carteira';
     button.textContent='Sair deste aparelho';button.onclick=()=>logout();
     panel.appendChild(button); config.appendChild(panel);
+    const status=document.createElement('p');status.id='deviceSessionStatus';status.setAttribute('role','status');status.textContent='O acesso salvo será confirmado ao entrar na carteira.';panel.append(status);
   });
   return Object.freeze({ prepare, ready, lock, endSession, requestSession, encodeCloud, decodeCloud, exportBackup, importBackup,
     needsMigration: uid => migration.has(uid), cloudSaved: uid => {

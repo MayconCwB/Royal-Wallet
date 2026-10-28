@@ -1,6 +1,6 @@
 {
   "name": "royal-wallet",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "private": true,
   "description": "Royal Wallet — controle financeiro em PT-BR",
   "scripts": {

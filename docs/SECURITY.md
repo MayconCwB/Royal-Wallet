@@ -42,6 +42,8 @@ Sair remove o acesso salvo desse UID e encerra a sessão criptográfica após co
 
 Fechar o aplicativo mantém o acesso. Bloqueio manual interno encerra o acesso salvo e exige senha. Navegação privada, limpeza do navegador ou falha de armazenamento podem impedir a persistência; o cliente informa a falha e conserva o caminho por senha/recuperação. O teste com Chromium reinicia o processo e comprova reabertura offline, isolamento por UID, ausência de senha em disco e chave não extraível. Ainda depende de validação em aparelhos físicos.
 
+A versão 1.1.1 compara os valores criptográficos em ordem fixa, sem depender da ordem das propriedades JSON devolvidas pelo servidor. Registros de acesso da versão anterior são lidos de forma compatível; uma alteração real na proteção continua invalidando o acesso. O teste de navegador reproduz respostas de nuvem reordenadas e comprova restauração de um registro antigo sem nova senha.
+
 ## Regras e publicação
 
 As regras ativas do projeto foram consultadas sem ler carteiras e conferem com `firestore.rules`: restringem o acesso ao UID proprietário, proíbem listagem de carteiras, validam o envelope em criação e atualização e impedem a volta ao formato em texto aberto ou a troca silenciosa do identificador da chave. O Firestore não consegue provar que um blob é criptograficamente válido; essa verificação é feita pelo cliente com AES-GCM.

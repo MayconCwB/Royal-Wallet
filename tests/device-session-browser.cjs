@@ -36,10 +36,11 @@ const server=http.createServer((req,res)=>{const url=new URL(req.url,'http://loc
   assert.deepEqual(errors,[]);console.log('OK: usuário diferente não herda acesso; Sair remove o acesso automático e preserva a carteira.');
   // Conta conectada: API Firebase inteiramente simulada, no mesmo navegador.
   let cloud=null,revision=0;
+  const sorted=value=>Array.isArray(value)?value.map(sorted):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(key=>[key,sorted(value[key])])):value;
   async function fakeFirebase(){
     await context.route('https://identitytoolkit.googleapis.com/**',route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(route.request().url().includes('accounts:lookup')?{users:[{localId:'cloud-session-test',email:'synthetic@example.invalid',displayName:'Sintético'}]}:{localId:'cloud-session-test',email:'synthetic@example.invalid',idToken:'test-token',refreshToken:'test-refresh',expiresIn:'3600'})}));
     await context.route('https://securetoken.googleapis.com/**',route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({user_id:'cloud-session-test',id_token:'test-token',refresh_token:'test-refresh',expires_in:'3600'})}));
-    await context.route('https://firestore.googleapis.com/**',route=>{const request=route.request();if(request.method()==='PATCH')cloud={...request.postDataJSON(),updateTime:'revision-'+(++revision)};return route.fulfill({status:cloud?200:404,contentType:'application/json',body:JSON.stringify(cloud||{})});});
+    await context.route('https://firestore.googleapis.com/**',route=>{const request=route.request();if(request.method()==='PATCH')cloud={...request.postDataJSON(),updateTime:'revision-'+(++revision)};return route.fulfill({status:cloud?200:404,contentType:'application/json',body:JSON.stringify(sorted(cloud||{}))});});
   }
   await page.evaluate(async()=>{logout();await WalletDeviceSession.restore('device',WalletStorage.metadata('device'));});await context.setOffline(false);await fakeFirebase();
   await page.locator('#authEmail').fill('synthetic@example.invalid');await page.locator('#authPassword').fill(password);await page.locator('#btnAuthSubmit').click();
@@ -48,8 +49,13 @@ const server=http.createServer((req,res)=>{const url=new URL(req.url,'http://loc
   assert.equal(await page.evaluate(()=>AppState.user.uid),'cloud-session-test');assert.equal(await page.evaluate(()=>AppState.data.movimentos.length),0);
   await page.evaluate(()=>switchTab('movimentos'));await page.getByRole('button',{name:'Recebi',exact:true}).click();await page.locator('#movDesc').fill('Entrada da conta conectada');await page.locator('#movValor').fill('77');await page.getByRole('button',{name:'Salvar',exact:true}).click();
   await page.waitForFunction(()=>!WalletStorage.hasPending());await page.evaluate(async()=>{await syncPendingCloud();await WalletStorage.flush();});
-  await context.close();context=null;page=await open();await fakeFirebase();await page.goto(url);await entered(page);
+  // Reproduz um registro de acesso persistido pela versão anterior, com objetos em outra ordem.
+  await page.evaluate(async()=>{const uid='cloud-session-test',meta=WalletStorage.metadata(uid);await new Promise((resolve,reject)=>{const request=indexedDB.open('royal-wallet-device-access',1);request.onerror=()=>reject(request.error);request.onsuccess=()=>{const db=request.result,tx=db.transaction('keys','readwrite'),store=tx.objectStore('keys'),get=store.get(uid);get.onsuccess=()=>{const record=get.result;record.version=JSON.stringify([meta.keyId,meta.kdf,meta.password,meta.recovery]);store.put(record,uid);};tx.oncomplete=()=>{db.close();resolve();};tx.onabort=()=>{db.close();reject(tx.error);};};});});
+  await context.close();context=null;page=await open();await fakeFirebase();await page.goto(url);
+  await page.waitForFunction(()=>!!document.getElementById('vaultPassword')||document.getElementById('loginOverlay').style.display==='none');
+  assert.equal(await page.locator('#vaultPassword').count(),0,'Reordenar os metadados na resposta da nuvem não deve pedir senha novamente.');await entered(page);
   assert.equal(await page.locator('#vaultPassword').count(),0);assert.equal(await page.evaluate(()=>AppState.user.uid),'cloud-session-test');assert.equal(await page.evaluate(()=>AppState.data.movimentos[0].valor),77);
+  assert.equal(await page.evaluate(async()=>{const meta=JSON.parse(JSON.stringify(WalletStorage.metadata('cloud-session-test')));meta.kdf.salt=btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16))));return await WalletDeviceSession.restore('cloud-session-test',meta);}),null,'Mudança real de proteção continua exigindo novo acesso.');
   assert.deepEqual(errors,[]);console.log('OK: conta conectada usa uma única senha, mantém login após reiniciar e não herda registros locais de outro usuário.');
  }finally{if(context)await context.close();await new Promise(resolve=>server.close(resolve));const resolved=path.resolve(profile),prefix=path.join(root,'.artifacts','device-session-test-');if(!resolved.startsWith(prefix))throw Error('Perfil fora da pasta de teste.');fs.rmSync(resolved,{recursive:true,force:true});}
 })().catch(e=>{console.error(e);process.exitCode=1;});
