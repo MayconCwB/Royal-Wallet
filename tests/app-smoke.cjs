@@ -185,7 +185,7 @@ async function securityFlow() {
   } finally { app.dom.window.close(); }
 }
 async function approvedFeaturesFlow() {
-  const app = launch();
+  const app = launch({royalQuickUnlock_device: JSON.stringify({retired:true})});
   const click = text => {
     const button = [...app.$('genericModalFooter').querySelectorAll('button')].find(b => b.textContent === text);
     assert(button, `Botão ${text} disponível`); button.click();
@@ -193,6 +193,9 @@ async function approvedFeaturesFlow() {
   try {
     await tick(); app.$('btnContinuarLocal').click(); await activate(app, 'senha longa dos recursos novos');
     const { w } = app, data = app.state().data;
+    assert.equal(w.localStorage.getItem('royalQuickUnlock_device'), null);
+    assert.equal(app.$('quickUnlockSetup'), null); assert.equal(app.$('vaultQuickUnlock'), null);
+    assert.equal(typeof w.WalletQuickUnlock, 'undefined');
     const today = new Date(), month = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}`, date = month+'-01';
     assert.equal(data.movimentos.length, 0); assert.equal(data.rendasPrevistas.length, 0);
     assert.equal(app.$('walletPendingIncome').hidden, true);

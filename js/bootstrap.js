@@ -1,5 +1,12 @@
     /* ===== INITIALIZATION ===== */
     document.addEventListener('DOMContentLoaded', async () => {
+      // Retira somente as preferências do experimento encerrado. Carteiras e chaves são mantidas.
+      try {
+        for (let index = localStorage.length - 1; index >= 0; index--) {
+          const key = localStorage.key(index);
+          if (key?.startsWith('royalQuickUnlock_')) localStorage.removeItem(key);
+        }
+      } catch (_) {} // Falha na limpeza não impede o desbloqueio por senha.
       // Prepara a abertura offline antes de qualquer chamada de autenticação.
       if ('serviceWorker' in navigator && window.isSecureContext) {
         navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' }).then(registration => {
