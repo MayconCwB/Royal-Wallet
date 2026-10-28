@@ -1,7 +1,11 @@
 /* Acesso persistente por navegador: CryptoKey não extraível, nunca a senha. */
 globalThis.WalletDeviceSession = (() => {
   const tasks=new Map(),epochs=new Map();
-  const version=meta=>JSON.stringify([meta.keyId,meta.kdf,meta.password,meta.recovery]);
+  // A nuvem pode reordenar propriedades JSON sem alterar nenhum material criptográfico.
+  const version=meta=>JSON.stringify([meta.keyId,meta.kdf.name,meta.kdf.hash,meta.kdf.iterations,meta.kdf.salt,meta.password.iv,meta.password.ciphertext,meta.recovery.iv,meta.recovery.ciphertext]);
+  function recordVersion(value){
+    try{const saved=JSON.parse(value);return Array.isArray(saved)&&saved.length===4?version({keyId:saved[0],kdf:saved[1],password:saved[2],recovery:saved[3]}):value;}catch(_){return null;}
+  }
   function database(){return new Promise((resolve,reject)=>{
     if(!globalThis.indexedDB)return reject(Error('Armazenamento de acesso indisponível.'));
     const request=indexedDB.open('royal-wallet-device-access',1);
@@ -25,7 +29,7 @@ globalThis.WalletDeviceSession = (() => {
     localStorage.removeItem('royalDeviceAccessRevoked_'+uid);if(uid==='device')localStorage.setItem('royalRememberLocal','1');return true;
   });}
   async function restore(uid,meta){await(tasks.get(uid)||Promise.resolve()).catch(()=>{});if(!meta||!globalThis.indexedDB)return null;
-    try{if(localStorage.getItem('royalDeviceAccessRevoked_'+uid)==='1')return null;const record=await operation(uid,'readonly',store=>store.get(uid));if(!record||record.owner!==uid||record.version!==version(meta))return null;const session=WalletCrypto.resume(uid,meta,record.key);for(const prefix of ['royalVaultData_','royalVaultQueue_']){const key=prefix+uid,raw=localStorage.getItem(key);if(raw)await session.decrypt(JSON.parse(raw),'local:'+key);}return session;}catch(_){return null;}
+    try{if(localStorage.getItem('royalDeviceAccessRevoked_'+uid)==='1')return null;const record=await operation(uid,'readonly',store=>store.get(uid));if(!record||record.owner!==uid||recordVersion(record.version)!==version(meta))return null;const session=WalletCrypto.resume(uid,meta,record.key);for(const prefix of ['royalVaultData_','royalVaultQueue_']){const key=prefix+uid,raw=localStorage.getItem(key);if(raw)await session.decrypt(JSON.parse(raw),'local:'+key);}return session;}catch(_){return null;}
   }
   function forget(uid){if(!uid)return Promise.resolve();epochs.set(uid,(epochs.get(uid)||0)+1);localStorage.setItem('royalDeviceAccessRevoked_'+uid,'1');if(uid==='device')localStorage.removeItem('royalRememberLocal');return queue(uid,async()=>{if(globalThis.indexedDB)await operation(uid,'readwrite',store=>store.delete(uid));});}
   return Object.freeze({remember,restore,forget});
