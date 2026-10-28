@@ -378,7 +378,7 @@ test('Service Worker remove apenas caches próprios e preserva HTML em caso de e
     self: { addEventListener: (name, handler) => { handlers[name] = handler; },
       clients: { claim: async () => {} }, location: { origin: 'https://wallet.example' } },
       caches: { keys: async () => ['royal-wallet-shell-v1', 'royal-wallet-shell-v6', 'royal-wallet-shell-v7', 'other-app'], match: async () => undefined,
-      delete: async key => removed.push(key), open: async () => ({ put: async () => stored++ }) },
+      delete: async key => removed.push(key), open: async () => ({ match: async () => undefined, put: async () => stored++ }) },
     fetch: async () => ({ ok: false, status: 503 })
   });
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'sw.js'), 'utf8'), context);
@@ -399,7 +399,7 @@ test('Abertura offline usa HTML local quando a rede falha, trava ou retorna erro
     const context = vm.createContext({ URL, Response,
       setTimeout: callback => setTimeout(callback, 0), clearTimeout,
       self: { addEventListener: (name, callback) => { handlers[name] = callback; }, location: { origin: 'https://wallet.example' } },
-      caches: { match: async () => cached, open: async () => ({ put: async () => { throw Error('Não guardar resposta de erro'); } }) },
+      caches: { match: async () => { throw Error('Não consultar caches de outras versões'); }, open: async () => ({ match: async () => cached, put: async () => { throw Error('Não guardar resposta de erro'); } }) },
       fetch: () => mode === 'hung' ? new Promise(() => {}) : mode === 'rejected' ? Promise.reject(new Error('offline')) : Promise.resolve({ ok: false, status: 503 })
     });
     vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'sw.js'), 'utf8'), context);
@@ -736,11 +736,26 @@ test('Cache offline inclui todos os scripts, estilos e imagens separados', async
   for (const ref of refs) assert(assets.includes(ref), ref);
   for (const asset of assets) assert(fs.existsSync(path.join(__dirname, '..', asset)), asset);
   const handlers = {}; let cached;
-  const context = vm.createContext({ self: { addEventListener: (name, fn) => { handlers[name] = fn; }, skipWaiting: async () => {} },
+  const context = vm.createContext({ Request: class { constructor(url, options) { this.url = url; this.cache = options.cache; } }, self: { addEventListener: (name, fn) => { handlers[name] = fn; }, skipWaiting: async () => {} },
     fetch: async () => ({ ok: true, json: async () => assets }), caches: { open: async () => ({ addAll: async files => { cached = files; } }) } });
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'sw.js'), 'utf8'), context);
   let installation; handlers.install({ waitUntil: task => { installation = task; } }); await installation;
-  for (const ref of refs) assert(cached.includes('./' + ref), ref);
+  for (const ref of refs) assert(cached.some(request => request.url === './' + ref && request.cache === 'reload'), ref);
+});
+
+test('Pacote offline mantém HTML e scripts da mesma versão sem atualização parcial', async () => {
+  const handlers = {}, reads = [], cached = { marker: 'versao-instalada' };let requests = 0;
+  const context = vm.createContext({ URL, Response, setTimeout, clearTimeout,
+    self: { location: { origin:'https://wallet.example' }, addEventListener: (name,fn) => { handlers[name]=fn; } },
+    caches: { match: async () => { throw Error('Cache global pode conter arquivos antigos'); }, open: async name => ({ match: async request => { reads.push(name);return cached; } }) },
+    fetch: async () => { requests++;return { marker:'versao-nova-isolada' }; }
+  });
+  vm.runInContext(fs.readFileSync(path.join(__dirname,'..','sw.js'),'utf8'),context);
+  for (const [mode,url] of [['navigate','https://wallet.example/'],['cors','https://wallet.example/js/security/crypto.js']]) {
+    let response;handlers.fetch({request:{method:'GET',mode,url},respondWith:task=>{response=task;},waitUntil(){}});
+    assert.equal((await response).marker,'versao-instalada');
+  }
+  assert.equal(requests,0);assert(reads.every(name=>name==='royal-wallet-shell-v11'));
 });
 
 (async () => {

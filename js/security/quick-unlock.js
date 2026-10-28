@@ -12,6 +12,7 @@ globalThis.WalletQuickUnlock = (() => {
   }
   const currentOwner = () => AppState.isLocal ? 'device' : AppState.user?.uid;
   const passwordVersion = meta => `${meta.kdf.salt}:${meta.password.iv}:${meta.password.ciphertext}`;
+  const compatible = () => typeof globalThis.WalletCrypto?.wrapQuickUnlock === 'function' && typeof globalThis.WalletCrypto?.unlockQuick === 'function';
   const supported = () => !!(globalThis.isSecureContext && globalThis.PublicKeyCredential && typeof PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable === 'function' && navigator.credentials?.create && navigator.credentials?.get);
   const binding = record => JSON.stringify(['royal-wallet-quick-unlock', 1, record.origin, record.owner, record.keyId, record.passwordVersion, record.credentialId]);
   const pending = new Set();
@@ -27,7 +28,7 @@ globalThis.WalletQuickUnlock = (() => {
     try { const raw = localStorage.getItem(storageKey(uid)); return raw ? validate(uid, meta, JSON.parse(raw)) : null; }
     catch (_) { return null; } // Nunca bloqueia a alternativa por senha.
   }
-  function available(uid, meta) { return supported() && !!meta && !!read(uid, meta); }
+  function available(uid, meta) { return compatible() && supported() && !!meta && !!read(uid, meta); }
   async function deriveKey(output, record) {
     if (!(output instanceof ArrayBuffer) || output.byteLength !== 32) throw Error('Este aparelho ou gerenciador de chaves não oferece o recurso necessário. Continue usando a senha.');
     const material = await crypto.subtle.importKey('raw', output, 'HKDF', false, ['deriveKey']); new Uint8Array(output).fill(0);
@@ -45,6 +46,7 @@ globalThis.WalletQuickUnlock = (() => {
     return deriveKey(credential.getClientExtensionResults()?.prf?.results?.first, record);
   }
   async function enroll(uid, meta, password) {
+    if (!compatible()) throw Error('Há uma atualização pendente do aplicativo. Feche e abra o app com internet e tente novamente. Sua senha continua funcionando.');
     if (!supported()) throw Error('Este navegador não oferece desbloqueio rápido. Sua senha continua funcionando.');
     const initial = WalletStorage.current(uid), controller = new AbortController(); pending.add(controller);
     const active = () => { if (controller.signal.aborted || currentOwner() !== uid || !WalletStorage.ready(uid) || WalletStorage.current(uid) !== initial) throw Error('A sessão mudou. Abra a ativação novamente.'); };
@@ -86,6 +88,7 @@ globalThis.WalletQuickUnlock = (() => {
   }
   function disable(uid) { cancelPending(); localStorage.removeItem(storageKey(uid)); render(); }
   function message(error) {
+    if (error.name === 'TypeError') return 'Não foi possível concluir esta operação. Feche e abra o app com internet para atualizar e tente novamente. Sua senha continua funcionando.';
     if (['AbortError','NotAllowedError'].includes(error.name)) return 'A confirmação não foi concluída. Você pode tentar novamente ou usar sua senha.';
     if (['NotSupportedError','SecurityError','InvalidStateError'].includes(error.name)) return 'Este navegador ou gerenciador de chaves não concluiu o desbloqueio rápido. Continue usando sua senha.';
     return error.message;
@@ -93,7 +96,7 @@ globalThis.WalletQuickUnlock = (() => {
   function render() {
     const status = document.getElementById('quickUnlockStatus'), button = document.getElementById('quickUnlockSetup'); if (!status || !button) return;
     const uid = currentOwner(), meta = uid && WalletStorage.metadata(uid), enabled = meta && available(uid,meta);
-    status.textContent = enabled ? 'Ativado neste navegador. Use o botão de desbloqueio rápido ao abrir a carteira.' : 'Opcional: confirme com Face ID, digital ou bloqueio do aparelho, conforme a compatibilidade. Sua senha continua disponível.';
+    status.textContent = !compatible() ? 'Há uma atualização pendente. Feche e abra o aplicativo com internet antes de ativar. Sua senha continua funcionando.' : enabled ? 'Ativado neste navegador. Use o botão de desbloqueio rápido ao abrir a carteira.' : 'Opcional: confirme com Face ID, digital ou bloqueio do aparelho, conforme a compatibilidade. Sua senha continua disponível.';
     button.textContent = enabled ? 'Desativar desbloqueio rápido' : 'Ativar desbloqueio rápido'; button.disabled = !WalletPrivacy.ready();
   }
   function configure() {
