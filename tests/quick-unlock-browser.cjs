@@ -75,6 +75,11 @@ const server=http.createServer((req,res)=>{
   await page.evaluate(()=>switchTab('config'));await page.locator('#quickUnlockSetup').click();await page.locator('#quickUnlockPassword').fill(newPassword);await page.getByRole('button',{name:'Ativar',exact:true}).click();await page.locator('#quickUnlockError').filter({hasText:'não oferece'}).waitFor();
   assert.equal(await page.evaluate(()=>localStorage.getItem('royalQuickUnlock_device')),null);await page.getByRole('button',{name:'Cancelar',exact:true}).click();
   console.log('OK: autenticador sem PRF mantém a senha e não ativa um desbloqueio incompatível.');
+  await page.evaluate(()=>{window.completeCrypto=WalletCrypto;globalThis.WalletCrypto=Object.freeze({...WalletCrypto,wrapQuickUnlock:undefined,unlockQuick:undefined});renderAll();});
+  await page.locator('#quickUnlockSetup').click();await page.locator('#quickUnlockPassword').fill(newPassword);await page.getByRole('button',{name:'Ativar',exact:true}).click();await page.locator('#quickUnlockError').filter({hasText:'atualização pendente'}).waitFor();
+  assert(!(await page.locator('#quickUnlockError').innerText()).includes('function'));
+  await page.evaluate(()=>{globalThis.WalletCrypto=window.completeCrypto;delete window.completeCrypto;});await page.getByRole('button',{name:'Cancelar',exact:true}).click();
+  console.log('OK: código antigo de criptografia produz aviso de atualização sem exibir código técnico.');
   assert.deepEqual(errors,[]);assert.deepEqual(await page.evaluate(()=>window.policyViolations),[]);
   console.log('OK: sem erros de execução ou violações CSP. Biometria física de iPhone/Android não é emulada por este teste.');
   await context.close();

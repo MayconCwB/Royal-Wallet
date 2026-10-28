@@ -35,6 +35,7 @@ A versão 1.1 inclui criptografia ponta a ponta dos dados financeiros. Cada cart
 2. Execute `npx firebase-tools hosting:channel:deploy royal-wallet-melhorias --expires 7d --project minha-carteira-app-7b58d`.
 
 A pasta `public` inclui somente os recursos enumerados em `app-assets.json`. Backups pessoais, testes, chaves e dependências de desenvolvimento não são publicados.
+Cada alteração nos recursos do aplicativo exige um novo `CACHE_NAME` em `sw.js`. O cache instala o pacote completo com revalidação HTTP e serve HTML e scripts da mesma versão, sem substituir arquivos individualmente. `npm run test:cache-upgrade` verifica a atualização de um cliente antigo sem apagar os dados locais.
 O canal de teste usa o mesmo Firebase do aplicativo: alterações feitas com uma conta real são sincronizadas nessa conta. Use uma conta de teste para a validação entre aparelhos.
 
 ## Convenções financeiras

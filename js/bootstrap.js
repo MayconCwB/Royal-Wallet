@@ -2,7 +2,11 @@
     document.addEventListener('DOMContentLoaded', async () => {
       // Prepara a abertura offline antes de qualquer chamada de autenticação.
       if ('serviceWorker' in navigator && window.isSecureContext) {
-        navigator.serviceWorker.register('./sw.js').then(() => navigator.serviceWorker.ready).then(() => {
+        navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' }).then(registration => {
+          const checkUpdate = () => { if (navigator.onLine) registration.update().catch(() => {}); };
+          window.addEventListener('online', checkUpdate);window.addEventListener('focus', checkUpdate);
+          return navigator.serviceWorker.ready;
+        }).then(() => {
           logEvent('Aplicativo preparado para abrir offline neste aparelho.');
         }).catch(e => logEvent('Preparação offline pendente: ' + e.message));
       }
