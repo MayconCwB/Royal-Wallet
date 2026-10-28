@@ -38,7 +38,7 @@ function setup({ secure = false } = {}) {
   });
   if (!secure) {
     context.walletStorage = context.localStorage;
-    context.WalletStorage = { flush: async () => {} };
+    context.WalletStorage = { flush: async () => {}, metadata: () => null };
     context.WalletPrivacy = { ready: () => true, prepare: async () => {}, endSession() {}, cloudSaved() {}, needsMigration: () => false,
       encodeCloud: async (_, data) => Object.fromEntries(['movimentos', 'recorrentes', 'parcelas', 'dividas', 'metas', 'historico', 'contas', 'cartoes', 'lixeira'].map(key => [key, context.api.toFsValue(data[key] || [])])) };
   }

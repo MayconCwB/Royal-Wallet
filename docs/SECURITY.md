@@ -57,6 +57,16 @@ Não volte a publicar um cliente que só compreende v2 depois de contas terem mi
 
 ## Validação e limites
 
+### Desbloqueio rápido opcional
+
+O usuário habilita a opção nas Configurações, confirma a senha da carteira e autoriza uma passkey de plataforma com verificação de usuário obrigatória. O desbloqueio usa WebAuthn PRF, HKDF-SHA-256 e AES-GCM para encapsular a chave de dados já existente. O segredo PRF e a chave aberta ficam apenas em memória; a chave AES importada não é extraível. A senha e a recuperação mantêm seus envelopes independentes.
+
+O registro `royalQuickUnlock_<uid>` fica no armazenamento local deste navegador, contém somente o envelope da chave, os parâmetros públicos e a referência da credencial. Não vai para Firebase ou backups. O contexto autenticado vincula origem, UID, identificador da carteira, versão da proteção por senha e credencial. A asserção exige confirmação do usuário e valida desafio, origem, hash do RP, credencial e flags de presença/verificação. O cliente não usa essa opção como login Firebase: a prova final é a abertura autenticada da chave e dos dados locais.
+
+A ativação só persiste após verificar o envelope. Cancelamento, incompatibilidade, ausência de PRF ou erro de armazenamento preservam o acesso por senha. Recuperar a senha invalida a configuração anterior; desativar remove o envelope local, sem apagar os dados. A passkey pode permanecer no gerenciador do aparelho e ser removida por seus ajustes. Biometria e PIN são tratados pelo sistema; o aplicativo não escolhe nem recebe o método biométrico.
+
+Rollback para a versão anterior mantém as carteiras legíveis por senha: o formato dos dados, os envelopes de senha/recuperação e as regras do Firestore não mudam. O arquivo novo é incluído no cache offline. A suíte `npm run test:quick-unlock` usa Chrome e autenticador virtual; não substitui validação em iPhone/Android físicos.
+
 Os testes cobrem senha incorreta, recuperação, IVs distintos, identidade e finalidade incorretas, conteúdo adulterado, armazenamento, fila, migração, erro de quota, transmissão cifrada, cache offline e dois aparelhos simulados. Há teste de interface para impedir que identificadores importados se tornem JavaScript executável. O HTML restringe scripts a arquivos locais e ao domínio oficial dos módulos Firebase por Content Security Policy; a autenticação não depende de handlers inline. O teste adicional em Chrome headless com viewport de 390px confirmou Web Crypto nativa, ausência de violações CSP, instalação do cache e reabertura/desbloqueio offline, com perfil temporário e dados fictícios.
 
 Esses testes não equivalem a uma auditoria independente de criptografia, a um teste em celular real ou a uma certificação de conformidade. A implementação é específica desta aplicação e requer revisão de segurança antes de uso amplo.
