@@ -1,4 +1,4 @@
-/* Criptografia nativa do navegador. Não guarda senha nem chave de dados em disco. */
+/* Criptografia nativa. Senha e chave bruta nunca são persistidas pelo aplicativo. */
 globalThis.WalletCrypto = (() => {
   'use strict';
   const iterations = 600000;
@@ -47,6 +47,7 @@ globalThis.WalletCrypto = (() => {
   function sessionForKey(owner, keyTask, metadata) {
     const meta = JSON.parse(JSON.stringify(metadata));
     return Object.freeze({ owner, metadata: Object.freeze(meta),
+      async deviceKey() { return keyTask; },
       withMetadata(next) {
         validate(next);
         if (next.keyId !== meta.keyId) throw Error('A chave da carteira mudou.');
@@ -70,8 +71,9 @@ globalThis.WalletCrypto = (() => {
   function requirePassword(password) {
     if (typeof password !== 'string' || password.length < 12 || password.length > 1024) throw Error('Use uma senha de carteira com pelo menos 12 caracteres.');
   }
-  async function create(owner, password) {
-    requirePassword(password);
+  async function create(owner, password, options = {}) {
+    if (options.loginPassword === true) { if (typeof password !== 'string' || password.length < 6 || password.length > 1024) throw Error('Confira a senha de acesso.'); }
+    else requirePassword(password);
     const raw = random(32), recovery = random(32), salt = random(16), keyId = b64(random(16));
     const metadata = { version: 1, algorithm: 'AES-256-GCM', keyId,
       kdf: { name: 'PBKDF2', hash: 'SHA-256', iterations, salt: b64(salt) },
@@ -101,5 +103,10 @@ globalThis.WalletCrypto = (() => {
     return session(owner, raw, updated);
   }
   function isEnvelope(value) { return !!value && value.format === 'royal-wallet-e2ee' && value.version === 1; }
-  return Object.freeze({ create, unlock, recover, isEnvelope, validate });
+  function resume(owner, metadata, key) {
+    validate(metadata);
+    if (!key || key.type !== 'secret' || key.extractable !== false || key.algorithm?.name !== 'AES-GCM' || key.algorithm.length !== 256 || !key.usages.includes('encrypt') || !key.usages.includes('decrypt')) throw Error('Acesso salvo inválido. Entre novamente.');
+    return sessionForKey(owner, Promise.resolve(key), metadata);
+  }
+  return Object.freeze({ create, unlock, recover, isEnvelope, validate, resume });
 })();

@@ -38,14 +38,14 @@ const server=http.createServer((req,res)=>{
   await page.reload();assert.equal(await page.evaluate(()=>typeof globalThis.walletCachedCryptoGeneration),'undefined');
   assert.equal(await page.evaluate(()=>localStorage.getItem('royalQuickUnlock_device')),null);
   assert.equal(await page.locator('#quickUnlockSetup').count(),0);
-  await page.locator('#btnContinuarLocal').click();await page.locator('#vaultPassword').fill(password);await page.getByRole('button',{name:'Desbloquear',exact:true}).click();await page.waitForFunction(()=>document.getElementById('loginOverlay').style.display==='none'&&!document.querySelector('.vault-overlay'));
+  await page.waitForFunction(()=>document.getElementById('loginOverlay').style.display==='none'&&!document.querySelector('.vault-overlay'));
   assert.equal(await page.evaluate(()=>AppState.data.movimentos[0].desc),'Registro privado antes da atualização');
-  const installed=await page.evaluate(async()=>{const cache=await caches.open('royal-wallet-shell-v12');return(await cache.match('./js/security/crypto.js')).text();});
+  const installed=await page.evaluate(async()=>{const cache=await caches.open('royal-wallet-shell-v13');return(await cache.match('./js/security/crypto.js')).text();});
   assert(!installed.includes('walletCachedCryptoGeneration'));assert(!installed.includes('wrapQuickUnlock'));
   await context.setOffline(true);await page.reload();assert.equal(await page.evaluate(()=>typeof globalThis.walletCachedCryptoGeneration),'undefined');
-  await page.locator('#btnContinuarLocal').click();await page.locator('#vaultPassword').fill(password);await page.getByRole('button',{name:'Desbloquear',exact:true}).click();await page.waitForFunction(()=>document.getElementById('loginOverlay').style.display==='none'&&!document.querySelector('.vault-overlay'));
+  await page.waitForFunction(()=>document.getElementById('loginOverlay').style.display==='none'&&!document.querySelector('.vault-overlay'));
   assert.equal(await page.evaluate(()=>AppState.data.movimentos[0].valor),12.34);
   assert.deepEqual(errors,[]);await context.close();
-  console.log('OK: cache antigo migra para v12, retira preferências de desbloqueio rápido e preserva dados cifrados e acesso por senha online/offline.');
+  console.log('OK: cache antigo migra para v13, preserva dados cifrados e mantém o acesso conectado online/offline.');
  }finally{if(browser)await browser.close();await new Promise(resolve=>server.close(resolve));}
 })().catch(e=>{console.error(e);process.exitCode=1;});

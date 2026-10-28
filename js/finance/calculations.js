@@ -1,3 +1,7 @@
+    globalThis.WalletDates = Object.freeze({
+      today(date = new Date()) { return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`; },
+      isFutureIncome(item, today = this.today()) { return item.tipo === 'receita' && typeof item.data === 'string' && parseCsvDate(item.data) === item.data && item.data > today; }
+    });
     function calcMonthlyFinancials() {
       const now = new Date();
       const curYear = now.getFullYear();
@@ -11,6 +15,7 @@
 
       // Movimentos
       AppState.data.movimentos.forEach(m => {
+        if (WalletDates.isFutureIncome(m)) return;
         const val = Number(m.valor) || 0;
         if (m.data) {
           const parts = m.data.split('-').map(Number);

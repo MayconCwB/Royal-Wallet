@@ -1,4 +1,4 @@
-const CACHE_NAME = 'royal-wallet-shell-v12';
+const CACHE_NAME = 'royal-wallet-shell-v13';
 const APP_URL = './index.html';
 
 self.addEventListener('install', event => {

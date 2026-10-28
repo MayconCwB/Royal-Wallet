@@ -7,7 +7,7 @@
   const iso=(day,m=month,y=year)=>`${y}-${String(m+1).padStart(2,'0')}-${String(Math.min(day,new Date(y,m+1,0).getDate())).padStart(2,'0')}`;
   const incomes=()=>AppState.data.rendasPrevistas || [];
   const expenses = data => data.movimentos.filter(m=>m.tipo==='despesa'&&m.classe!=='pagamento_fatura');
-  const received=item=>AppState.data.movimentos.some(m=>m.origem===`renda:${item.id}:${mes}`);
+  const received=item=>AppState.data.movimentos.some(m=>m.origem===`renda:${item.id}:${mes}`&&!WalletDates.isFutureIncome(m));
   const pending=()=>incomes().filter(item=>item.valor>0&&!received(item)).reduce((sum,item)=>sum+item.valor,0);
   const baseCalculate=calcMonthlyFinancials;
   const limits=()=> (AppState.data.orcamentos || []).filter(item=>item.mes===mes);
@@ -51,7 +51,7 @@
   function quick(desc='',cat='Outros',tipo='despesa'){
     openMovimentoForm();$('movTipo').value=tipo;$('movDesc').value=desc;$('movCategoria').value=cat;
     for(const id of ['movOrigem','movFatura'])if($(id))$(id).closest('.form-group').hidden=true;
-    const help=$('genericModalBody').querySelector('p.wallet-muted');if(help)help.textContent='Entradas aumentam o saldo. Gastos registram dinheiro que já saiu. Os valores são registrados por você.';
+    const help=$('genericModalBody').querySelector('p.wallet-muted');if(help)help.textContent='Entradas aumentam o saldo. Gastos registram dinheiro que já saiu. Os valores são registrados por você. Para agendar uma entrada, escolha uma data futura; ela só entra no saldo nesse dia.';
     if(tipo==='despesa'){
       const favorites=document.createElement('div');favorites.className='wallet-favorites';
       const label=document.createElement('span');label.textContent='Usar favorito:';favorites.append(label);
@@ -110,7 +110,7 @@
   }
   function simplifyMovements(importButton){
     const section=$('tab-movimentos'),filterPanel=$('buscaMovimento').closest('.panel'),oldTable=$('tabelaMovimentos').closest('.table-container');
-    const actions=section.querySelector('.wallet-actions');actions.replaceChildren(button('Recebi',()=>quick('','Salário','receita'),true),button('Gastei',()=>quick(),true));actions.classList.add('wallet-primary-actions');
+    const actions=section.querySelector('.wallet-actions');actions.replaceChildren(button('Recebi',()=>quick('','Salário','receita'),true),button('Gastei',()=>quick(),true),button('A receber',()=>{quick('','Outros','receita');const day=new Date();day.setDate(day.getDate()+1);$('movData').value=WalletDates.today(day);}));actions.classList.add('wallet-primary-actions');
     section.querySelector('p.wallet-muted')?.remove();
     oldTable.hidden=true;
     const context=document.createElement('div');context.className='wallet-ledger-context';
@@ -135,6 +135,7 @@
       const all=$('walletMovementAll').checked,selected=$('walletMovementMonth').value||mes,term=$('buscaMovimento').value.trim().toLocaleLowerCase('pt-BR'),type=$('filtroTipoMovimento').value;
       $('walletMovementMonth').disabled=all;
       const items=AppState.data.movimentos.filter(x=>(all||x.data?.slice(0,7)===selected)&&(type==='todos'||x.tipo===type)&&`${x.desc||x.descricao||''} ${x.cat||x.categoria||''}`.toLocaleLowerCase('pt-BR').includes(term)).sort((a,b)=>String(b.data||'').localeCompare(String(a.data||'')));
+      renderMovementChart(items);
       const [y,m]=selected.split('-').map(Number),monthLabel=new Date(y,m-1,1).toLocaleDateString('pt-BR',{month:'long',year:'numeric'});
       period.textContent=(all?'Todo o período':monthLabel.charAt(0).toUpperCase()+monthLabel.slice(1))+' · '+items.length+(items.length===1?' registro':' registros');
       list.replaceChildren();$('movimentosTbody').replaceChildren();
@@ -142,13 +143,21 @@
       for(const item of items){
         const li=document.createElement('li'),row=document.createElement('button');row.type='button';row.className='wallet-record';row.dataset.movementId=item.id;
         const text=document.createElement('span'),name=document.createElement('strong'),date=document.createElement('small'),value=document.createElement('span');
-        name.textContent=item.desc||item.descricao||'Sem descrição';date.textContent=item.data?item.data.split('-').reverse().join('/'):'Sem data';text.append(name,date);
+        name.textContent=item.desc||item.descricao||'Sem descrição';date.textContent=(item.data?item.data.split('-').reverse().join('/'):'Sem data')+(WalletDates.isFutureIncome(item)?' · A receber (agendado)':'');text.append(name,date);
         value.textContent=(item.tipo==='receita'?'+ ':'− ')+fmtBRL(item.valor);value.className=item.tipo==='receita'?'wallet-value-in':'wallet-value-out';row.append(text,value);row.onclick=()=>details(item.id);li.append(row);list.append(li);
       }
     }
     renderMovimentos=renderList;
     for(const id of ['buscaMovimento','filtroTipoMovimento','walletMovementMonth','walletMovementAll'])$(id).addEventListener(id==='buscaMovimento'?'input':'change',renderList);
     renderList();
+  }
+  function renderMovementChart(items){
+    const effective=items.filter(item=>!WalletDates.isFutureIncome(item)&&item.classe!=='pagamento_fatura');
+    const income=effective.filter(x=>x.tipo==='receita').reduce((s,x)=>s+Math.round(x.valor*100),0)/100,spent=effective.filter(x=>x.tipo==='despesa').reduce((s,x)=>s+Math.round(x.valor*100),0)/100;
+    $('kpiEntradas').textContent=fmtBRL(income);$('kpiGastos').textContent=fmtBRL(spent);
+    const max=Math.max(income,spent,1);for(const [id,value] of [['movementIncomeBar',income],['movementExpenseBar',spent]])if($(id)){$(id).style.width=`${Math.max(0,value/max*100)}%`;$(id).setAttribute('aria-valuemin','0');$(id).setAttribute('aria-valuemax',String(max));$(id).setAttribute('aria-valuenow',String(value));}
+    const categories=new Map();effective.filter(x=>x.tipo==='despesa').forEach(x=>categories.set(x.cat||'Outros',(categories.get(x.cat||'Outros')||0)+x.valor));
+    const box=$('chartBoxCategorias'),categoryMax=Math.max(...categories.values(),1);box.replaceChildren();for(const [category,value] of categories){const row=document.createElement('div');row.style.marginBottom='12px';row.innerHTML=`<div style="display:flex;justify-content:space-between;gap:8px"><strong>${esc(category)}</strong><span>${fmtBRL(value)}</span></div><div class="progress-track"><div class="progress-fill" style="width:${value/categoryMax*100}%;background:var(--danger)"></div></div>`;box.append(row);}if(!categories.size)box.textContent='Nenhum gasto no período selecionado.';
   }
   function normalizeIncome(raw){
     const ids=new Set();return (Array.isArray(raw)?raw:[]).flatMap((item,index)=>{
@@ -192,6 +201,8 @@
   globalThis.WalletExperience=Object.freeze({normalizeIncome,received,pending,refreshPeriod,configureIncome,report,simulate,parseOfx,importOfx});
   const baseRender=renderAll;renderAll=()=>{baseRender();renderIncome();};
   document.addEventListener('DOMContentLoaded',()=>{
+      const chart=document.createElement('div');chart.id='movementFinancialChart';chart.className='panel';chart.innerHTML='<h3>Entradas e gastos do período</h3><p class="wallet-muted">Somente valores que já entraram ou saíram. Entradas agendadas entram automaticamente na data indicada.</p><div id="movementChartCards" class="wallet-form-grid"></div>';
+      for(const [kpi,id,color] of [['kpiEntradas','movementIncomeBar','var(--emerald)'],['kpiGastos','movementExpenseBar','var(--danger)']]){const card=$(kpi).closest('.kpi-card');card.querySelector('.kpi-title').childNodes[0].textContent=kpi==='kpiEntradas'?'Entradas ':'Gastos ';const track=document.createElement('div');track.className='progress-track';track.innerHTML=`<div id="${id}" class="progress-fill" style="background:${color};width:0%" role="meter" aria-label="${kpi==='kpiEntradas'?'Entradas':'Gastos'}"></div>`;card.append(track);chart.querySelector('#movementChartCards').append(card);}$('tab-movimentos').append(chart);$('tab-movimentos').append($('chartBoxCategorias').closest('.panel'));
       document.querySelector('[data-tab="contascartoes"]')?.remove();$('tab-contascartoes').hidden=true;
       const legacy=document.createElement('div');legacy.id='walletLegacyAccounts';legacy.className='panel wallet-card';legacy.hidden=true;legacy.innerHTML='<h3>Registros anteriores de contas e cartões</h3><p>Dados antigos foram preservados para não alterar seus saldos nem impedir a quitação de faturas já cadastradas.</p>';legacy.append(button('Consultar registros anteriores',()=>{$('tab-contascartoes').hidden=false;switchTab('contascartoes');}));$('tab-config').append(legacy);
       document.querySelector('[data-tab="movimentos"]').textContent='💵 Entradas e gastos';
@@ -201,8 +212,8 @@
       const importButton=$('btnImportarCsv').cloneNode(true);$('btnImportarCsv').replaceWith(importButton);importButton.textContent='Importar extrato CSV / OFX';
       const upload=document.createElement('input');upload.type='file';upload.accept='.ofx,.csv';upload.hidden=true;document.body.append(upload);importButton.onclick=()=>upload.click();upload.onchange=async()=>{const f=upload.files[0],owner=localDataKey();if(!f)return;try{if(!WalletPrivacy.ready()||f.size>5*1024*1024)throw Error('Desbloqueie a carteira e use um arquivo de até 5 MB.');if(f.name.toLowerCase().endsWith('.ofx')){const text=await f.text();if(WalletPrivacy.ready()&&owner===localDataKey())importOfx(text);}else importCsvFile(f);}catch(e){alert(e.message);}finally{upload.value='';}};
       simplifyMovements(importButton);
-      const baseOpen=openMovimentoForm;openMovimentoForm=editing=>{baseOpen(editing);for(const id of ['movOrigem','movFatura'])if($(id))$(id).closest('.form-group').hidden=true;const p=$('genericModalBody').querySelector('p.wallet-muted');if(p)p.textContent='Registre valores que já entraram ou saíram. Para recebimentos previstos, use Salário e vale nas Configurações.';};
-      const originalLabels=[['kpiSaldoReal','Saldo calculado'],['kpiEntradas','Recebido neste mês'],['kpiGastos','Gastos registrados'],['kpiCompromissos','Ainda falta pagar'],['kpiPrecisoTer','Falta para os compromissos'],['kpiSaldoPrevisto','Previsão depois de pagar tudo']];originalLabels.forEach(([id,label])=>{const title=$(id).closest('.kpi-card').querySelector('.kpi-title');title.childNodes[0].textContent=label+' ';});
+      const baseOpen=openMovimentoForm;openMovimentoForm=editing=>{baseOpen(editing);for(const id of ['movOrigem','movFatura'])if($(id))$(id).closest('.form-group').hidden=true;const p=$('genericModalBody').querySelector('p.wallet-muted');if(p)p.textContent='Para agendar uma entrada, informe quem vai pagar e escolha a data futura. Ela só será somada ao saldo a partir desse dia, automaticamente.';};
+      const originalLabels=[['kpiSaldoReal','Saldo calculado'],['kpiEntradas','Entradas'],['kpiGastos','Gastos registrados'],['kpiCompromissos','Ainda falta pagar'],['kpiPrecisoTer','Falta para os compromissos'],['kpiSaldoPrevisto','Previsão depois de pagar tudo']];originalLabels.forEach(([id,label])=>{const title=$(id).closest('.kpi-card').querySelector('.kpi-title');title.childNodes[0].textContent=label+' ';});
       const section=document.createElement('div');section.id='walletIncome';section.className='panel wallet-income';section.innerHTML='<h3>Salário e vale</h3><p class="wallet-muted">Cadastre os valores e os dias que você espera receber. Confirme a entrada pelo aviso no Resumo quando o dinheiro chegar.</p><div id="walletIncomeRows"></div>';section.append(button('Ajustar valores e dias',configureIncome));$('tab-config').insertBefore(section,$('tab-config').children[1]);
       const pendingLine=document.createElement('div');pendingLine.id='walletPendingIncome';pendingLine.className='wallet-pending-income';pendingLine.setAttribute('aria-live','polite');pendingLine.innerHTML='<span id="walletIncomeTotal"></span>';pendingLine.append(button('Confirmar recebimento',choosePendingIncome));$('tab-resumo').insertBefore(pendingLine,$('walletInsights'));
       const actions=document.createElement('div');actions.className='wallet-actions';actions.append(button('Até o próximo recebimento',nextIncome),button('Relatório do mês',report),button('Lembretes',reminders));$('tab-resumo').insertBefore(actions,pendingLine.nextSibling);
@@ -210,6 +221,7 @@
       const subscriptionAction=document.createElement('div');subscriptionAction.className='wallet-actions';subscriptionAction.append(button('Ver minhas assinaturas',subscriptions));$('tab-recorrentes').insertBefore(subscriptionAction,$('tab-recorrentes').children[1]);
       renderIncome();
       window.addEventListener('focus',()=>{if(WalletPrivacy.ready())renderAll();});
+      let lastDay=WalletDates.today();const checkDay=()=>{const day=WalletDates.today();if(day!==lastDay){lastDay=day;if(WalletPrivacy.ready())renderAll();}setTimeout(checkDay,30000);};setTimeout(checkDay,30000);
       const baseEnter=enterApp;enterApp=(...args)=>{baseEnter(...args);if(AppState.data.avisosAtivos&&WalletPrivacy.ready()){const count=WalletFeatures.summaryInsights().overdue.length;if(count)showToast(`${count} compromisso(s) vencido(s) pendente(s).`);}};
   });
 })();

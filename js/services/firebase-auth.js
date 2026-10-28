@@ -123,5 +123,6 @@
       });
       if (!res.ok) throw new Error("A carteira foi excluída da nuvem, mas a conta não foi removida. Entre novamente e repita a exclusão.");
       walletStorage.removeItem(`royalDeletionPending_${uid}`);
+      await globalThis.WalletDeviceSession?.forget(uid);
       return res.data;
     }

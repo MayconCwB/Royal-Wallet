@@ -4,6 +4,10 @@ Controle financeiro pessoal em PT-BR, com contas individuais no Firebase e modo 
 
 ## Recursos
 
+- Acesso mantido ao fechar o app neste navegador, com chave não extraível no IndexedDB. Sair encerra esse acesso; carteiras antigas exigem uma primeira confirmação da senha anterior por aparelho.
+- Novas carteiras conectadas usam a mesma senha do login. A chave de recuperação continua disponível.
+- Entradas futuras pelo botão A receber: valor, descrição e data. Entram no saldo automaticamente a partir do dia indicado, sem duplicar lançamentos.
+- Gráficos e totais de entradas/gastos na aba Entradas e gastos, acompanhando os filtros do período.
 - Sincronização por usuário, conflitos entre aparelhos e fila offline.
 - Atualizações do Firestore em tempo real após novo login; sessões antigas usam consulta de 15 segundos.
 - Edição de contas fixas, parcelas e dívidas, preservando pagamentos anteriores.

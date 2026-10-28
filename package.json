@@ -9,6 +9,7 @@
     "test:ui": "node tests/app-smoke.cjs",
     "test:browser": "node scripts/prepare-release.cjs && node tests/browser-smoke.cjs",
     "test:cache-upgrade": "node scripts/prepare-release.cjs && node tests/cache-upgrade-browser.cjs",
+    "test:device-session": "node scripts/prepare-release.cjs && node tests/device-session-browser.cjs",
     "prepare:release": "node scripts/prepare-release.cjs"
   },
   "engines": {
