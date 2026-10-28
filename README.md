@@ -14,6 +14,7 @@ Controle financeiro pessoal em PT-BR, com contas individuais no Firebase e modo 
 - Parcelamentos sem o antigo limite de 120; quantidades acima de 120 ou parcelas acima de R$ 5.000 exigem confirmação.
 - Pagamentos de compromissos geram o gasto correspondente; reversão de contas fixas e parcelas atualiza o saldo.
 - Limites por categoria, simulação de compra, relatório mensal para impressão e lembretes dentro do aplicativo.
+- Desbloqueio rápido opcional por passkey com PRF, ativado em Configurações. Mantém senha e recuperação como alternativas; a compatibilidade é confirmada na ativação.
 - A área de contas e cartões saiu do menu. Registros anteriores continuam acessíveis nas Configurações para preservar saldos e faturas.
 - Comparação com o mês anterior e indicação de compromissos vencidos.
 
