@@ -32,28 +32,15 @@ globalThis.WalletPrivacy = (() => {
       overlay.querySelector('#vaultLabel').textContent = label;
       const $ = id => overlay.querySelector('#' + id);
       let pending = null, busy = false;
-      let quickController = null;
       const finish = value => {
         for (const input of overlay.querySelectorAll('input,textarea')) input.value = '';
         pending = null; overlay.remove(); resolve(value);
       };
       const cancel = () => {
-        if (quickController) { quickController.abort(); return; }
         if (busy) return;
         pending = null; overlay.remove(); const error = Error('Desbloqueio cancelado. Os dados foram preservados.'); error.code = 'VAULT_CANCELLED'; reject(error);
       };
       $('vaultCancel').onclick = cancel;
-      if (metadata && globalThis.WalletQuickUnlock?.available(uid,metadata)) {
-        const quick = document.createElement('button');quick.type='button';quick.className='btn btn-primary';quick.id='vaultQuickUnlock';quick.textContent='Desbloqueio rápido';
-        $('vaultForm').before(quick);
-        quick.onclick=async()=>{
-          if(busy)return;busy=true;quick.disabled=true;quickController=new AbortController();
-          const submit=overlay.querySelector('button[type="submit"]');submit.disabled=true;$('vaultError').textContent='Confirme sua identidade no aparelho…';
-          try {const session=await WalletQuickUnlock.unlock(uid,metadata,quickController.signal);finish({session,changed:false});}
-          catch(error){if(overlay.isConnected)$('vaultError').textContent=WalletQuickUnlock.message(error);}
-          finally{busy=false;quickController=null;quick.disabled=false;submit.disabled=false;}
-        };
-      }
       if (metadata) $('vaultRecover').onchange = () => {
         const recovery = $('vaultRecover').checked;
         $('vaultRecoveryInput').hidden = !recovery; $('vaultConfirmBox').hidden = !recovery;
@@ -76,7 +63,6 @@ globalThis.WalletPrivacy = (() => {
             $('vaultDownloadRecovery').onclick = () => download('royal-wallet-chave-recuperacao.txt', 'Royal Wallet — chave de recuperação\nGuarde em local seguro. Não compartilhe.\n\n' + pending.recoveryKey + '\n', 'text/plain;charset=utf-8');
           } else {
             const session = recovery ? await WalletCrypto.recover(uid, metadata, $('vaultRecovery').value, password) : await WalletCrypto.unlock(uid, metadata, password);
-            if(recovery)globalThis.WalletQuickUnlock?.disable(uid);
             finish({ session, changed: recovery });
           }
           $('vaultError').textContent = '';
@@ -159,7 +145,6 @@ globalThis.WalletPrivacy = (() => {
     return session.decrypt(backup.payload, 'backup');
   }
   async function lock() {
-    globalThis.WalletQuickUnlock?.cancelPending();
     stopRealtimeSync();
     if (AppState.saveQueueTimeout) clearTimeout(AppState.saveQueueTimeout);
     await Promise.allSettled([...saveTasks.values()]); await WalletStorage.lock();
@@ -171,7 +156,6 @@ globalThis.WalletPrivacy = (() => {
     enterApp();
   }
   function endSession() {
-    globalThis.WalletQuickUnlock?.cancelPending();
     locking = locking.catch(() => {}).then(() => WalletStorage.lock());
     locking.catch(() => {
       setSyncBadge('⚠️ Há alterações não salvas. Mantenha o aplicativo aberto.');

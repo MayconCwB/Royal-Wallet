@@ -100,30 +100,6 @@ globalThis.WalletCrypto = (() => {
       password: await seal(await passwordKey(newPassword, salt), raw, context(owner, metadata.keyId, 'password')) };
     return session(owner, raw, updated);
   }
-  // Encapsula a mesma chave de dados com um segredo liberado pela passkey.
-  // A chave em claro fica restrita a esta função e é limpa mesmo no cancelamento.
-  async function wrapQuickUnlock(owner, metadata, password, obtainKey) {
-    validate(metadata);
-    let raw;
-    try {
-      try { raw = new Uint8Array(await open(await passwordKey(password, unb64(metadata.kdf.salt)), metadata.password, context(owner, metadata.keyId, 'password'))); }
-      catch (_) { throw Error('Senha da carteira incorreta. O desbloqueio rápido não foi ativado.'); }
-      const { key, binding, record } = await obtainKey();
-      const wrapped = await seal(key, raw, utf8.encode(binding));
-      const probe = new Uint8Array(await open(key, wrapped, utf8.encode(binding)));
-      const valid = probe.length === raw.length && probe.every((value, i) => value === raw[i]); probe.fill(0);
-      if (!valid) throw Error('Não foi possível verificar o desbloqueio rápido.');
-      return { ...record, wrapped };
-    } finally { if (raw) raw.fill(0); }
-  }
-  async function unlockQuick(owner, metadata, wrapped, key, binding) {
-    validate(metadata); let raw;
-    try {
-      raw = new Uint8Array(await open(key, wrapped, utf8.encode(binding)));
-      return session(owner, raw, metadata);
-    } catch (_) { throw Error('Não foi possível abrir a carteira por este desbloqueio. Use sua senha.'); }
-    finally { if (raw) raw.fill(0); }
-  }
   function isEnvelope(value) { return !!value && value.format === 'royal-wallet-e2ee' && value.version === 1; }
-  return Object.freeze({ create, unlock, recover, isEnvelope, validate, wrapQuickUnlock, unlockQuick });
+  return Object.freeze({ create, unlock, recover, isEnvelope, validate });
 })();

@@ -755,7 +755,7 @@ test('Pacote offline mantém HTML e scripts da mesma versão sem atualização p
     let response;handlers.fetch({request:{method:'GET',mode,url},respondWith:task=>{response=task;},waitUntil(){}});
     assert.equal((await response).marker,'versao-instalada');
   }
-  assert.equal(requests,0);assert(reads.every(name=>name==='royal-wallet-shell-v11'));
+  assert.equal(requests,0);assert(reads.every(name=>name==='royal-wallet-shell-v12'));
 });
 
 (async () => {
