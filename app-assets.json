@@ -34,5 +34,6 @@
   "assets/css/security.css",
   "assets/css/experience.css",
   "js/features/budgets.js",
-  "js/features/experience.js"
+  "js/features/experience.js",
+  "js/security/device-session.js"
 ]

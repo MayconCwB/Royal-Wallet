@@ -36,6 +36,7 @@
     ensureData();
     let total = cents(AppState.data.contas.find(c => c.id === accountId)?.saldoInicial);
     for (const m of AppState.data.movimentos) {
+      if (WalletDates.isFutureIncome(m)) continue;
       if ((m.contaId || '') !== accountId || (m.cartaoId && m.classe !== 'pagamento_fatura')) continue;
       total += (m.tipo === 'receita' ? 1 : -1) * cents(m.valor);
     }
@@ -79,6 +80,7 @@
     const mes = monthISO();
     let saldo = AppState.data.contas.reduce((sum, c) => sum + cents(c.saldoInicial), 0);
     AppState.data.movimentos.forEach(m => {
+      if (WalletDates.isFutureIncome(m)) return;
       if (m.cartaoId && m.classe !== 'pagamento_fatura') return;
       saldo += (m.tipo === 'receita' ? 1 : -1) * cents(m.valor);
     });
@@ -251,6 +253,7 @@
       const faturaMes = selectedCard ? value('movFatura') || invoiceMonth(selectedCard, data) : '';
       if (selectedCard && !/^\d{4}-(0[1-9]|1[0-2])$/.test(faturaMes)) throw new Error('Informe um mês de fatura válido.');
       saveEntry('movimentos', editing?.id, { desc, descricao: desc, valor: amount(valor), data, tipo, cat, categoria: cat, contaId, cartaoId, faturaMes });
+      if(tipo==='receita'&&data>dateISO()) { const month=document.getElementById('walletMovementMonth');if(month)month.value=data.slice(0,7); }
     });
   };
   function editAccount(id = null) {

@@ -7,12 +7,12 @@ globalThis.WalletPrivacy = (() => {
   const owner = () => AppState.isLocal ? 'device' : AppState.user?.uid;
   function active(uid) { if (!uid || uid !== owner()) throw Error('A conta ativa mudou. Abra a carteira novamente.'); }
   function ready(uid = owner()) { return !!uid && WalletStorage.ready(uid); }
-  function requestSession(uid, metadata, label = 'sua carteira') {
+  function requestSession(uid, metadata, label = 'sua carteira', loginPassword = null) {
     return new Promise((resolve, reject) => {
       const overlay = document.createElement('div');
       overlay.className = 'vault-overlay'; overlay.setAttribute('role', 'dialog'); overlay.setAttribute('aria-modal', 'true'); overlay.setAttribute('aria-labelledby', 'vaultTitle');
       overlay.innerHTML = `<div class="vault-dialog"><h2 id="vaultTitle">${metadata ? 'Desbloqueie sua carteira' : 'Proteja sua carteira'}</h2>
-        <p id="vaultLabel"></p><p>${metadata ? 'A senha da carteira é diferente da senha de login do Firebase.' : 'Crie uma senha com pelo menos 12 caracteres. Ela protege os dados financeiros neste aparelho, na nuvem e nos backups.'}</p>
+        <p id="vaultLabel"></p><p>${metadata ? 'Informe a senha usada anteriormente nesta carteira para autorizar o primeiro acesso neste aparelho. Depois, você permanecerá conectado.' : loginPassword ? 'Sua senha de acesso também protege a carteira. Guarde a chave de recuperação antes de continuar.' : 'Crie uma senha com pelo menos 12 caracteres para proteger sua carteira local. Depois, o app permanecerá conectado neste aparelho.'}</p>
         <form id="vaultForm">
           ${metadata ? '<label class="vault-check"><input type="checkbox" id="vaultRecover"> Usar chave de recuperação</label>' : ''}
           <div id="vaultRecoveryInput" hidden><label for="vaultRecovery">Chave de recuperação</label><input id="vaultRecovery" type="password" class="input-field" autocomplete="off"></div>
@@ -55,7 +55,7 @@ globalThis.WalletPrivacy = (() => {
           const password = $('vaultPassword').value, recovery = !!$('vaultRecover')?.checked;
           if ((!metadata || recovery) && password !== $('vaultConfirm').value) throw Error('As senhas não coincidem.');
           if (!metadata) {
-            pending = await WalletCrypto.create(uid, password);
+            pending = await WalletCrypto.create(uid, password, {loginPassword:!!loginPassword});
             $('vaultPassword').value = ''; $('vaultConfirm').value = ''; $('vaultForm').hidden = true;
             $('vaultRecoverySave').hidden = false; $('vaultRecoveryOutput').value = pending.recoveryKey;
             $('vaultRecoverySaved').onchange = () => { $('vaultContinue').disabled = !$('vaultRecoverySaved').checked; };
@@ -70,9 +70,10 @@ globalThis.WalletPrivacy = (() => {
         finally { busy = false; button.disabled = false; }
       };
       $('vaultPassword').focus();
+      if(!metadata&&loginPassword){$('vaultForm').hidden=true;$('vaultPassword').value=loginPassword;$('vaultConfirm').value=loginPassword;Promise.resolve().then(()=>$('vaultForm').onsubmit({preventDefault(){}}));}
     });
   }
-  async function prepare(user = AppState.user) {
+  async function prepare(user = AppState.user, options = {}) {
     await locking;
     const uid = AppState.isLocal ? 'device' : user?.uid;
     active(uid);
@@ -97,9 +98,15 @@ globalThis.WalletPrivacy = (() => {
       } else if (uid !== 'device' && !meta) throw Error('Conecte-se à internet para ativar a proteção pela primeira vez. Depois será possível abrir offline.');
       if (remoteMeta && meta && remoteMeta.keyId !== meta.keyId) throw Error('A nuvem e este aparelho possuem chaves diferentes. Preserve o backup local antes de continuar.');
       const pendingMetadata = walletStorage.getItem(`royalVaultMetadataPending_${uid}`) === '1';
-      const result = await requestSession(uid, pendingMetadata ? meta : remoteMeta || meta, uid === 'device' ? 'Carteira local deste aparelho' : user.email || 'Sua conta');
+      const chosenMeta=pendingMetadata?meta:remoteMeta||meta;
+      let saved=chosenMeta?await WalletDeviceSession.restore(uid,chosenMeta):null;active(uid);
+      if(!saved&&chosenMeta&&options.loginPassword){try{saved=await WalletCrypto.unlock(uid,chosenMeta,options.loginPassword);}catch(_) {}}
+      const result = saved?{session:saved,changed:false}:await requestSession(uid,chosenMeta,uid==='device'?'Carteira local — este aparelho ficará conectado após o primeiro acesso.':user.email||'Sua conta',options.loginPassword);
       active(uid);
       await WalletStorage.unlock(uid, result.session);
+      active(uid);
+      try{const remembered=await WalletDeviceSession.remember(uid,result.session);if(!remembered&&globalThis.indexedDB)showToast('Não foi possível manter o acesso neste navegador. A senha continua disponível.');}catch(_){showToast('Não foi possível manter o acesso neste navegador. A senha continua disponível.');}
+      active(uid);
       if (uid !== 'device' && (legacyCloud || result.changed || pendingMetadata)) {
         migration.add(uid); walletStorage.setItem(`royalVaultMetadataPending_${uid}`, '1');
       }
@@ -145,6 +152,7 @@ globalThis.WalletPrivacy = (() => {
     return session.decrypt(backup.payload, 'backup');
   }
   async function lock() {
+    await WalletDeviceSession.forget(owner());
     stopRealtimeSync();
     if (AppState.saveQueueTimeout) clearTimeout(AppState.saveQueueTimeout);
     await Promise.allSettled([...saveTasks.values()]); await WalletStorage.lock();
@@ -156,7 +164,8 @@ globalThis.WalletPrivacy = (() => {
     enterApp();
   }
   function endSession() {
-    locking = locking.catch(() => {}).then(() => WalletStorage.lock());
+    const forget=WalletDeviceSession.forget(owner());
+    locking = locking.catch(() => {}).then(() => forget.catch(()=>{})).then(() => WalletStorage.lock());
     locking.catch(() => {
       setSyncBadge('⚠️ Há alterações não salvas. Mantenha o aplicativo aberto.');
       alert('Não foi possível concluir a gravação criptografada. Mantenha o aplicativo aberto para preservar as alterações.');
@@ -169,9 +178,9 @@ globalThis.WalletPrivacy = (() => {
     const config = document.getElementById('tab-config');
     if (!config) return;
     const panel = document.createElement('div'); panel.className = 'panel wallet-card';
-    panel.innerHTML = '<h3>🔐 Proteção da carteira</h3><p>Dados financeiros protegidos com criptografia ponta a ponta. A senha da carteira e a chave de recuperação não são enviadas ao Firebase.</p><p>E-mail, sessão de login e horários de sincronização continuam sendo usados para autenticação e funcionamento do serviço.</p>';
+    panel.innerHTML = '<h3>🔐 Acesso e proteção</h3><p>Você permanece conectado neste navegador ao fechar o app. A senha não é salva; a chave da carteira fica no armazenamento deste navegador. Quem acessar este aparelho poderá abrir a carteira.</p><p>Dados financeiros continuam criptografados na nuvem e nos backups. Use Sair para encerrar o acesso neste aparelho.</p>';
     const button = document.createElement('button'); button.className = 'btn btn-outline'; button.textContent = 'Bloquear carteira';
-    button.onclick = () => lock().catch(error => { if (error.code !== 'VAULT_CANCELLED') alert(error.message); });
+    button.textContent='Sair deste aparelho';button.onclick=()=>logout();
     panel.appendChild(button); config.appendChild(panel);
   });
   return Object.freeze({ prepare, ready, lock, endSession, requestSession, encodeCloud, decodeCloud, exportBackup, importBackup,

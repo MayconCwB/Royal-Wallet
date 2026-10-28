@@ -106,7 +106,7 @@ globalThis.WalletStorage = (() => {
       if (JSON.stringify(await session.decrypt(envelope, `local:${name}`)) !== JSON.stringify(data)) throw Error('A migração local não foi verificada.');
       staged.push([name, JSON.stringify(envelope)]);
     }
-    // As chaves só são guardadas encapsuladas pela senha e pela recuperação.
+    // Metadados preservam os envelopes de senha e recuperação; acesso local é gerido separadamente.
     native.setItem(metaKey(uid), JSON.stringify(session.metadata));
     for (const [name, value] of staged) native.setItem(name, value);
     if (local !== null) native.removeItem(key);

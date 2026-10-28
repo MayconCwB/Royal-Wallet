@@ -407,6 +407,8 @@
             document.getElementById('loginOverlay').style.display = 'flex';
           }
         }
+      } else if (walletStorage.getItem('royalRememberLocal') === '1') {
+        document.getElementById('btnContinuarLocal').click();
       } else {
         document.getElementById('loginOverlay').style.display = 'flex';
       }

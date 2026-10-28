@@ -14,9 +14,9 @@ E-mail, perfil de autenticação e tokens continuam sendo gerenciados pelo Fireb
 - AES-256-GCM via Web Crypto, com IV aleatório de 96 bits a cada operação e tag de autenticação de 128 bits.
 - Chave de encapsulamento derivada da senha com PBKDF2-SHA256, 600.000 iterações e salt aleatório de 128 bits. Senha mínima de 12 caracteres; frases longas são preferíveis.
 - Chave de recuperação independente, aleatória, de 256 bits. O arquivo de recuperação contém essa chave e deve ser guardado pelo usuário fora do aparelho.
-- A chave de dados é encapsulada separadamente pela senha e pela recuperação. Só os encapsulamentos e parâmetros públicos são persistidos.
+- A chave de dados é encapsulada separadamente pela senha e pela recuperação. Na nuvem e nos backups são persistidos somente encapsulamentos e parâmetros públicos. Para manter o acesso local, o navegador também persiste um CryptoKey AES não extraível no IndexedDB, separado por UID.
 - Identidade, identificador da chave, versão e finalidade entram nos dados adicionais autenticados. Cópias de nuvem, armazenamento local e backup têm contextos distintos.
-- Chaves AES de sessão não são exportáveis e ficam em memória. Senha e recuperação não são gravadas em localStorage nem enviadas ao Firebase.
+- Chaves AES não são exportáveis. Senha e recuperação não são gravadas em localStorage. Em novas carteiras conectadas, o mesmo valor da senha de login protege o envelope da carteira; esse valor é processado pelo Firebase Auth no login. A chave de dados e a recuperação não são enviadas ao provedor.
 
 O documento `carteiras/{uid}` passa a conter somente `v=e2ee-1`, `atualizadoEm`, `encryption` e `payload`. O conteúdo autenticado inclui também a versão lógica da carteira; inconsistências com o horário externo são rejeitadas.
 
@@ -32,13 +32,15 @@ Contas de outros usuários presentes no mesmo aparelho só são migradas quando 
 
 ## Desbloqueio, recuperação e perdas
 
-Depois da primeira ativação, a carteira pode ser aberta offline com sua senha. A primeira ativação de uma conta autenticada exige internet, para evitar criar uma chave diferente da existente na nuvem. O modo local tem sua própria senha e recuperação.
+Depois da primeira ativação, o navegador salva o acesso e pode reabrir a carteira offline sem pedir a senha. A primeira ativação de uma conta autenticada exige internet, para evitar criar uma chave diferente da existente na nuvem. Carteiras antigas podem exigir a senha anterior uma vez por aparelho; novas carteiras conectadas reutilizam a senha de login. No modo local a senha inicial continua sendo criada no aparelho.
 
 Para recuperar o acesso, use a opção de chave de recuperação e escolha uma nova senha. Isso encapsula novamente a mesma chave de dados e preserva o conteúdo. A nova senha é sincronizada quando o envio é confirmado. A recuperação não revoga chaves ou encapsulamentos que um invasor já tenha copiado. Rotação por comprometimento da chave de dados exige um procedimento futuro específico.
 
 Redefinir a senha de login do Firebase não recupera a senha da carteira. Se a senha da carteira e sua chave de recuperação forem perdidas, o conteúdo cifrado não pode ser recuperado pelo administrador. Nunca solicite essas credenciais pelo suporte.
 
-O botão Bloquear remove as chaves e os dados em memória após concluir as gravações; sair também encerra a sessão criptográfica. A troca de conta aguarda a persistência anterior. O aplicativo sinaliza gravações pendentes e solicita confirmação de saída quando o navegador suporta esse aviso; fechar o processo ou desligar o aparelho pode interromper uma gravação ainda não concluída.
+Sair remove o acesso salvo desse UID e encerra a sessão criptográfica após concluir as gravações. Uma marca de revogação impede reutilizar o acesso se a exclusão no IndexedDB falhar. A restauração verifica UID, metadados e abertura dos envelopes existentes; falha não apaga os dados e permite entrar pela senha. Quem tiver acesso ao navegador conectado pode abrir a carteira: a chave não extraível não protege contra código malicioso executando na mesma origem. IndexedDB, acesso local salvo e tokens não entram nos backups.
+
+Fechar o aplicativo mantém o acesso. Bloqueio manual interno encerra o acesso salvo e exige senha. Navegação privada, limpeza do navegador ou falha de armazenamento podem impedir a persistência; o cliente informa a falha e conserva o caminho por senha/recuperação. O teste com Chromium reinicia o processo e comprova reabertura offline, isolamento por UID, ausência de senha em disco e chave não extraível. Ainda depende de validação em aparelhos físicos.
 
 ## Regras e publicação
 

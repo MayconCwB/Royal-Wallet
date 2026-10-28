@@ -57,9 +57,8 @@ async function main() {
     assert(!disk.includes('Gasto confidencial de teste')); assert(!disk.includes('senha ficticia longa do teste'));
     assert.deepEqual(await page.evaluate(() => window.policyViolations), []);
     await context.setOffline(true); await page.reload();
-    await page.locator('#btnContinuarLocal').click(); await page.locator('#vaultPassword').fill('senha ficticia longa do teste');
-    await page.getByRole('button', { name: 'Desbloquear', exact: true }).click();
     await page.waitForFunction(() => !document.querySelector('.vault-overlay') && document.getElementById('loginOverlay').style.display === 'none');
+    assert.equal(await page.locator('#vaultPassword').count(),0);
     await page.locator('#btnMenu').click(); await page.locator('[data-tab="movimentos"]').click();
     assert(await page.getByText('Gasto confidencial de teste', { exact: true }).isVisible());
     assert.deepEqual(await page.evaluate(() => window.policyViolations), []); assert.deepEqual(errors, []);

@@ -243,10 +243,33 @@ async function approvedFeaturesFlow() {
     const rawBackup=await new Promise(resolve=>{const reader=new w.FileReader();reader.onload=()=>resolve(reader.result);reader.readAsText(w.lastDownload);});
     assert(!rawBackup.includes('rendasPrevistas'));const restored=await w.WalletPrivacy.importBackup(JSON.parse(rawBackup));
     assert.equal(restored.rendasPrevistas.length,2);assert.equal(restored.orcamentos.length,1);assert.equal(restored.recorrentes[0].assinatura,true);
+    const tomorrow=new Date(today);tomorrow.setDate(tomorrow.getDate()+1);
+    const beforeFuture=w.calcMonthlyFinancials().saldoReal;
+    const future={id:'future-income-test',tipo:'receita',desc:'Receber de pessoa no futuro',valor:123.45,data:w.WalletDates.today(tomorrow),cat:'Outros'};
+    data.movimentos.push(future);w.renderAll();assert.equal(w.calcMonthlyFinancials().saldoReal,beforeFuture);
+    future.data=w.WalletDates.today(today);w.renderAll();assert.equal(w.calcMonthlyFinancials().saldoReal,Math.round((beforeFuture+123.45)*100)/100);
+    w.renderAll();assert.equal(data.movimentos.filter(x=>x.id===future.id).length,1);
+    assert(app.$('tab-movimentos').contains(app.$('kpiEntradas')));assert(!app.$('tab-resumo').contains(app.$('kpiEntradas')));
+    assert(app.$('tab-movimentos').contains(app.$('chartBoxCategorias')));
     await w.WalletStorage.flush();w.logout();await w.WalletStorage.lock();app.$('btnContinuarLocal').click();await unlock(app,'senha longa dos recursos novos');
     assert.equal(app.state().data.rendasPrevistas.length,2);assert.equal(app.state().data.orcamentos.length,1);
     assert.deepEqual(app.errors,[]);
     console.log('OK: salário/vale sem duplicação, pagamentos reversíveis, milhão de parcelas sem travar, limites, OFX sem reimportação e backup cifrado dos novos recursos.');
   } finally { app.dom.window.close(); }
 }
-(async () => { await approvedFeaturesFlow(); await securityFlow(); await localFlow(); await cloudFlow(); })().catch(error => { console.error(error); process.exitCode = 1; });
+async function singlePasswordFlow() {
+  const app=launch({},async()=>({status:404,data:{}}));
+  try {
+    await tick();app.state().isLocal=false;app.state().user={uid:'new-user',email:'teste@example.invalid',idToken:'synthetic-token'};
+    const task=app.w.WalletPrivacy.prepare(app.state().user,{loginPassword:'senha unica de acesso teste'});
+    await until(()=>app.$('vaultRecoveryOutput')?.value,'A recuperação não foi gerada com a senha de acesso.');
+    assert.equal(app.$('vaultForm').hidden,true,'A senha de acesso evita um segundo cadastro de senha.');
+    app.$('vaultRecoverySaved').checked=true;app.$('vaultRecoverySaved').dispatchEvent(new app.w.Event('change'));app.$('vaultContinue').click();await task;
+    assert(app.w.WalletPrivacy.ready());
+    const current=app.w.WalletStorage.current('new-user');const probe=await current.encrypt({private:true});
+    const reopened=await app.w.WalletCrypto.unlock('new-user',current.metadata,'senha unica de acesso teste');
+    assert.equal((await reopened.decrypt(probe)).private,true);assert.deepEqual(app.errors,[]);
+    console.log('OK: conta nova usa a mesma senha de acesso para a criptografia, sem pedir uma segunda senha.');
+  } finally {app.dom.window.close();}
+}
+(async () => { await singlePasswordFlow(); await approvedFeaturesFlow(); await securityFlow(); await localFlow(); await cloudFlow(); })().catch(error => { console.error(error); process.exitCode = 1; });

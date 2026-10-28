@@ -25,6 +25,7 @@
         setAuthError("Preencha e-mail e senha.");
         return;
       }
+      if (isRegisterMode && password.length < 12) { setAuthError('Crie uma senha de acesso com pelo menos 12 caracteres. Ela também protegerá sua carteira.'); return; }
 
       const btn = document.getElementById('btnAuthSubmit');
       btn.disabled = true;
@@ -45,7 +46,7 @@
           AppState.isLocal = false;
           persistUserSession(AppState.user);
           // Carrega apenas o armazenamento desta identidade.
-          await WalletPrivacy.prepare(AppState.user);
+          await WalletPrivacy.prepare(AppState.user, {loginPassword:password});
           await syncCloudOnLogin();
           enterApp({ email, password });
         } else {
@@ -63,7 +64,7 @@
           persistUserSession(AppState.user);
 
           // Check cloud doc vs local
-          await WalletPrivacy.prepare(AppState.user);
+          await WalletPrivacy.prepare(AppState.user, {loginPassword:password});
           await syncCloudOnLogin();
           enterApp({ email, password });
         }
